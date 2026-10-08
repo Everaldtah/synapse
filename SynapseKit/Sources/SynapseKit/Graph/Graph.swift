@@ -46,6 +46,11 @@ public struct GraphData: Sendable {
     public var nodes: [GraphNode]
     public var edges: [GraphEdge]
 
+    public init(nodes: [GraphNode], edges: [GraphEdge]) {
+        self.nodes = nodes
+        self.edges = edges
+    }
+
     public static func nodeID(_ id: UUID) -> String { "p:" + id.uuidString }
 }
 
