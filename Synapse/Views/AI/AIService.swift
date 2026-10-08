@@ -1,0 +1,441 @@
+import Foundation
+import Observation
+import Security
+import SynapseKit
+
+/// Where AI requests go.
+enum AIProviderKind: String, CaseIterable, Identifiable {
+    /// Synapse Bridge on your computer, running Claude Code signed in to your Claude subscription.
+    case bridge
+    /// Directly to the Claude API with your Anthropic API key.
+    case apiKey
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bridge: return "Claude subscription (via Claude Code)"
+        case .apiKey: return "Anthropic API key"
+        }
+    }
+}
+
+struct AIModelOption: Identifiable, Hashable {
+    var id: String
+    var title: String
+    var detail: String
+
+    /// API models. Opus 5.5 is the default.
+    static let api: [AIModelOption] = [
+        AIModelOption(id: "claude-opus-5-5", title: "Claude Opus 5.5", detail: "Most capable for everyday work (default)"),
+        AIModelOption(id: "claude-sonnet-5-5", title: "Claude Sonnet 5.5", detail: "Fast and capable"),
+        AIModelOption(id: "claude-haiku-5-5", title: "Claude Haiku 5.5", detail: "Fastest and cheapest"),
+        AIModelOption(id: "claude-fable-5-1", title: "Claude Fable 5.1", detail: "Anthropic's most capable model"),
+    ]
+
+    /// Claude Code model aliases (the bridge passes them to `claude --model`).
+    static let bridge: [AIModelOption] = [
+        AIModelOption(id: "default", title: "Claude Code default", detail: "Whatever your plan uses by default"),
+        AIModelOption(id: "opus", title: "Opus", detail: "Latest Opus"),
+        AIModelOption(id: "sonnet", title: "Sonnet", detail: "Latest Sonnet"),
+        AIModelOption(id: "haiku", title: "Haiku", detail: "Latest Haiku"),
+    ]
+}
+
+struct AIError: LocalizedError {
+    var message: String
+    var errorDescription: String? { message }
+}
+
+/// The Claude connection: settings, secrets in the Keychain, and streaming requests.
+@MainActor
+@Observable
+final class AIService {
+    // Settings live in UserDefaults; access/withMutation keep SwiftUI views observing them.
+    var provider: AIProviderKind {
+        get { access(keyPath: \.provider); return AIProviderKind(rawValue: UserDefaults.standard.string(forKey: "ai.provider") ?? "") ?? .bridge }
+        set { withMutation(keyPath: \.provider) { UserDefaults.standard.set(newValue.rawValue, forKey: "ai.provider") } }
+    }
+    var bridgeURL: String {
+        get { access(keyPath: \.bridgeURL); return UserDefaults.standard.string(forKey: "ai.bridgeURL") ?? "" }
+        set { withMutation(keyPath: \.bridgeURL) { UserDefaults.standard.set(newValue, forKey: "ai.bridgeURL") } }
+    }
+    var bridgeName: String {
+        get { access(keyPath: \.bridgeName); return UserDefaults.standard.string(forKey: "ai.bridgeName") ?? "" }
+        set { withMutation(keyPath: \.bridgeName) { UserDefaults.standard.set(newValue, forKey: "ai.bridgeName") } }
+    }
+    var apiModel: String {
+        get { access(keyPath: \.apiModel); return UserDefaults.standard.string(forKey: "ai.apiModel") ?? "claude-opus-5-5" }
+        set { withMutation(keyPath: \.apiModel) { UserDefaults.standard.set(newValue, forKey: "ai.apiModel") } }
+    }
+    var bridgeModel: String {
+        get { access(keyPath: \.bridgeModel); return UserDefaults.standard.string(forKey: "ai.bridgeModel") ?? "default" }
+        set { withMutation(keyPath: \.bridgeModel) { UserDefaults.standard.set(newValue, forKey: "ai.bridgeModel") } }
+    }
+    /// low / medium / high
+    var effort: String {
+        get { access(keyPath: \.effort); return UserDefaults.standard.string(forKey: "ai.effort") ?? "medium" }
+        set { withMutation(keyPath: \.effort) { UserDefaults.standard.set(newValue, forKey: "ai.effort") } }
+    }
+    /// What the bridge reported about the Claude account it's signed in to.
+    var bridgeAccount: String?
+    var lastCheck: String?
+
+    private(set) var hasBridgeToken = false
+    private(set) var hasAPIKey = false
+
+    init() {
+        hasBridgeToken = Keychain.get("bridgeToken") != nil
+        hasAPIKey = Keychain.get("anthropicAPIKey") != nil
+    }
+
+    var isConfigured: Bool {
+        switch provider {
+        case .bridge: return !bridgeURL.isEmpty && hasBridgeToken
+        case .apiKey: return hasAPIKey
+        }
+    }
+
+    var statusText: String {
+        switch provider {
+        case .bridge:
+            if !isConfigured { return "Not connected" }
+            return bridgeAccount.map { "Connected · \($0)" } ?? "Paired with \(bridgeName.isEmpty ? bridgeURL : bridgeName)"
+        case .apiKey:
+            return hasAPIKey ? "API key saved · \(AIModelOption.api.first { $0.id == apiModel }?.title ?? apiModel)" : "No API key"
+        }
+    }
+
+    func pair(url: String, token: String, name: String) {
+        var u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        while u.hasSuffix("/") { u.removeLast() }
+        bridgeURL = u
+        bridgeName = name
+        Keychain.set(token, for: "bridgeToken")
+        hasBridgeToken = true
+        provider = .bridge
+        bridgeAccount = nil
+    }
+
+    func unpair() {
+        Keychain.delete("bridgeToken")
+        hasBridgeToken = false
+        bridgeURL = ""
+        bridgeName = ""
+        bridgeAccount = nil
+    }
+
+    func setAPIKey(_ key: String) {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if k.isEmpty {
+            Keychain.delete("anthropicAPIKey")
+            hasAPIKey = false
+        } else {
+            Keychain.set(k, for: "anthropicAPIKey")
+            hasAPIKey = true
+        }
+    }
+
+    // MARK: - Health
+
+    struct BridgeHealth: Decodable {
+        struct Claude: Decodable {
+            var loggedIn: Bool?
+            var email: String?
+            var subscriptionType: String?
+            var authMethod: String?
+            var version: String?
+        }
+        var ok: Bool
+        var name: String?
+        var version: String?
+        var claude: Claude?
+    }
+
+    /// Ask the bridge which Claude account it runs on.
+    func checkBridge() async -> Result<BridgeHealth, AIError> {
+        guard let base = URL(string: bridgeURL), let token = Keychain.get("bridgeToken") else {
+            return .failure(AIError(message: "Not paired with a bridge."))
+        }
+        var req = URLRequest(url: base.appendingPathComponent("v1/health"))
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 else {
+                return .failure(AIError(message: code == 401 ? "The bridge rejected the pairing token. Pair again." : "The bridge answered \(code)."))
+            }
+            let health = try JSONDecoder().decode(BridgeHealth.self, from: data)
+            if let c = health.claude {
+                if c.loggedIn == true {
+                    var s = c.email ?? "Claude account"
+                    if let plan = c.subscriptionType, !plan.isEmpty { s += " (\(plan.capitalized))" }
+                    bridgeAccount = s
+                } else {
+                    bridgeAccount = nil
+                    return .failure(AIError(message: "Claude Code on \(health.name ?? "the bridge") isn't signed in. Run `claude auth login` there."))
+                }
+            }
+            if let n = health.name, !n.isEmpty { bridgeName = n }
+            lastCheck = "OK"
+            return .success(health)
+        } catch {
+            lastCheck = error.localizedDescription
+            return .failure(AIError(message: "Can't reach the bridge at \(bridgeURL): \(error.localizedDescription)"))
+        }
+    }
+
+    // MARK: - Streaming
+
+    /// Stream the reply's text.
+    func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
+        switch provider {
+        case .bridge:
+            guard let base = URL(string: bridgeURL), let token = Keychain.get("bridgeToken") else {
+                return Self.failing(AIError(message: "Connect your Claude account in Settings › Claude first."))
+            }
+            return BridgeClient(baseURL: base, token: token, model: bridgeModel, effort: effort).stream(request)
+        case .apiKey:
+            guard let key = Keychain.get("anthropicAPIKey") else {
+                return Self.failing(AIError(message: "Add an Anthropic API key in Settings › Claude first."))
+            }
+            return AnthropicClient(apiKey: key, model: apiModel, effort: effort).stream(request)
+        }
+    }
+
+    /// The whole reply at once.
+    func complete(_ request: AIRequest) async throws -> String {
+        var out = ""
+        for try await chunk in stream(request) { out += chunk }
+        return out
+    }
+
+    static func failing(_ error: Error) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { $0.finish(throwing: error) }
+    }
+}
+
+/// Server-sent events: yields the `data:` payload of each event.
+enum SSE {
+    static func events(_ bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<(event: String, data: String), Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var event = ""
+                    var data = ""
+                    for try await line in bytes.lines {
+                        if line.hasPrefix("event:") {
+                            event = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+                        } else if line.hasPrefix("data:") {
+                            let chunk = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                            data = data.isEmpty ? chunk : data + "\n" + chunk
+                            // Each event here is one line of JSON, so emit right away.
+                            continuation.yield((event, data))
+                            event = ""
+                            data = ""
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+/// Talks to Synapse Bridge (`bridge/synapse-bridge.mjs`).
+struct BridgeClient {
+    var baseURL: URL
+    var token: String
+    var model: String
+    var effort: String
+
+    func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var req = URLRequest(url: baseURL.appendingPathComponent("v1/chat"))
+                    req.httpMethod = "POST"
+                    req.timeoutInterval = 600
+                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    var body: [String: Any] = [
+                        "system": request.system,
+                        "messages": request.messages.map { ["role": $0.role.rawValue, "content": $0.content] },
+                        "effort": effort,
+                    ]
+                    if model != "default" { body["model"] = model }
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    guard code == 200 else {
+                        var text = ""
+                        for try await line in bytes.lines { text += line; if text.count > 2000 { break } }
+                        throw AIError(message: code == 401 ? "The bridge rejected the pairing token. Pair again in Settings." :
+                                        "Bridge error \(code): \(BridgeClient.message(from: text))")
+                    }
+                    for try await ev in SSE.events(bytes) {
+                        guard let json = try? JSONSerialization.jsonObject(with: Data(ev.data.utf8)) as? [String: Any] else { continue }
+                        switch json["type"] as? String {
+                        case "delta":
+                            if let t = json["text"] as? String { continuation.yield(t) }
+                        case "error":
+                            throw AIError(message: (json["message"] as? String) ?? "The bridge reported an error.")
+                        case "done":
+                            continuation.finish()
+                            return
+                        default:
+                            break
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    static func message(from text: String) -> String {
+        if let data = text.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let m = json["error"] as? String ?? json["message"] as? String {
+            return m
+        }
+        return String(text.prefix(300))
+    }
+}
+
+/// Talks to the Claude API (Messages API, streaming) with the user's API key.
+struct AnthropicClient {
+    var apiKey: String
+    var model: String
+    var effort: String
+
+    /// Server-side refusal fallback (beta) is offered for these models on the Claude API.
+    private var supportsFallback: Bool {
+        model.hasPrefix("claude-opus-5") || model.hasPrefix("claude-sonnet-5-5") || model.hasPrefix("claude-fable-5")
+    }
+
+    func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+                    req.httpMethod = "POST"
+                    req.timeoutInterval = 600
+                    req.setValue("application/json", forHTTPHeaderField: "content-type")
+                    req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+                    req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                    var body: [String: Any] = [
+                        "model": model,
+                        "max_tokens": 32000,
+                        "stream": true,
+                        "system": request.system,
+                        "messages": request.messages.map { ["role": $0.role.rawValue, "content": $0.content] },
+                        "output_config": ["effort": effort],
+                    ]
+                    if supportsFallback {
+                        req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+                        body["fallbacks"] = "default"
+                    }
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    guard code == 200 else {
+                        var text = ""
+                        for try await line in bytes.lines { text += line; if text.count > 4000 { break } }
+                        throw AIError(message: AnthropicClient.describe(code: code, body: text))
+                    }
+                    for try await ev in SSE.events(bytes) {
+                        guard let json = try? JSONSerialization.jsonObject(with: Data(ev.data.utf8)) as? [String: Any] else { continue }
+                        switch json["type"] as? String {
+                        case "content_block_delta":
+                            if let delta = json["delta"] as? [String: Any], delta["type"] as? String == "text_delta",
+                               let t = delta["text"] as? String {
+                                continuation.yield(t)
+                            }
+                        case "message_delta":
+                            if let delta = json["delta"] as? [String: Any], delta["stop_reason"] as? String == "refusal" {
+                                continuation.yield("\n\n_(Claude declined to continue this request.)_")
+                            } else if let delta = json["delta"] as? [String: Any], delta["stop_reason"] as? String == "max_tokens" {
+                                continuation.yield("\n\n_(Reply cut off at the length limit.)_")
+                            }
+                        case "error":
+                            let e = (json["error"] as? [String: Any])?["message"] as? String ?? "The Claude API reported an error."
+                            throw AIError(message: e)
+                        case "message_stop":
+                            continuation.finish()
+                            return
+                        default:
+                            break
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    static func describe(code: Int, body: String) -> String {
+        var message = ""
+        if let data = body.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let err = json["error"] as? [String: Any] {
+            message = err["message"] as? String ?? ""
+        }
+        switch code {
+        case 401: return "The API key was rejected. Check it in Settings › Claude."
+        case 403: return "This API key can't use that model. \(message)"
+        case 404: return "Model not found: \(message)"
+        case 429: return "Rate limited by the Claude API. Try again in a moment."
+        case 529, 503: return "Claude is overloaded right now. Try again shortly."
+        default: return "Claude API error \(code). \(message)"
+        }
+    }
+}
+
+/// Minimal Keychain wrapper for the bridge token and API key.
+enum Keychain {
+    private static let service = "com.everaldtah.synapse"
+
+    static func set(_ value: String, for key: String) {
+        delete(key)
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: Data(value.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        SecItemAdd(q as CFDictionary, nil)
+    }
+
+    static func get(_ key: String) -> String? {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func delete(_ key: String) {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(q as CFDictionary)
+    }
+}

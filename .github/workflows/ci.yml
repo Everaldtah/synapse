@@ -1,0 +1,65 @@
+# SynapseKit tests on Linux (cheap) and a simulator build of the iOS app on a GitHub Mac.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["Synapse/**", "SynapseKit/**", "bridge/**", "project.yml", ".github/workflows/ci.yml"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ios:
+        description: "Also build the iOS app (uses macOS minutes)"
+        type: boolean
+        default: true
+
+jobs:
+  kit:
+    name: SynapseKit tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path SynapseKit
+
+  bridge:
+    name: Bridge syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node --check bridge/synapse-bridge.mjs
+
+  ios:
+    name: iOS simulator build
+    needs: kit
+    if: github.event_name != 'workflow_dispatch' || inputs.ios
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode 26
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          sudo xcode-select -s "$X/Contents/Developer"
+          xcodebuild -version
+      - name: Generate the Xcode project
+        run: |
+          which xcodegen || brew install xcodegen
+          xcodegen generate
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build -project Synapse.xcodeproj -scheme Synapse -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO 2>&1 | tee build.log \
+            | grep -E --line-buffered '(error|warning: unre|\*\* BUILD)' || true
+          grep -q '\*\* BUILD SUCCEEDED \*\*' build.log || { echo "---- errors ----"; grep -E 'error:' build.log | sort -u | head -150; exit 1; }
+      - name: Log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore

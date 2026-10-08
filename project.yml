@@ -1,0 +1,82 @@
+# XcodeGen spec — `xcodegen generate` writes Synapse.xcodeproj (generated in CI, not committed).
+name: Synapse
+options:
+  bundleIdPrefix: com.everaldtah
+  deploymentTarget:
+    iOS: "18.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: BXQW8UBNM2
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  SynapseKit:
+    path: SynapseKit
+
+schemes:
+  Synapse:
+    build:
+      targets:
+        Synapse: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+
+targets:
+  Synapse:
+    type: application
+    platform: iOS
+    sources:
+      - path: Synapse
+        excludes:
+          - "**/.DS_Store"
+    dependencies:
+      - package: SynapseKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everaldtah.synapse
+        PRODUCT_NAME: Synapse
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_EMIT_LOC_STRINGS: NO
+    info:
+      path: Synapse/Info.plist
+      properties:
+        CFBundleDisplayName: Synapse
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleURLTypes:
+          - CFBundleURLName: com.everaldtah.synapse
+            CFBundleURLSchemes: [synapse]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSCameraUsageDescription: Synapse uses the camera to scan the pairing QR code shown by Synapse Bridge, and to take photos for your pages.
+        NSLocalNetworkUsageDescription: Synapse connects to Synapse Bridge on your computer so AI features can run on your own Claude subscription.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
