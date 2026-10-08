@@ -75,8 +75,9 @@ swift test --package-path SynapseKit
 ### TestFlight
 
 Run the **TestFlight** workflow (Actions tab), or push a `v*` tag. It needs the repo secrets `ASC_KEY_P8`,
-`ASC_KEY_ID` and `ASC_ISSUER_ID` (an App Store Connect API key with the Admin role), plus an App Store Connect app
-record for `com.everaldtah.synapse`.
+`ASC_KEY_ID` and `ASC_ISSUER_ID` (an App Store Connect API key with the Admin role). The App Store Connect record is
+**Synapse Notes** (`com.everaldtah.synapse`; "Synapse" was taken on the store, but the home-screen name is Synapse), and
+builds go to the internal group **Synapse testers**. `tools/asc/asc.py` is a small App Store Connect API client.
 
 ## License
 
