@@ -67,6 +67,41 @@ final class ModelCatalogTests: XCTestCase {
     }
 }
 
+final class DownloadableModelTests: XCTestCase {
+    func testBudgetsAndCards() {
+        XCTAssertEqual(ModelCatalog.budget(for: ModelCatalog.appleFoundation), .apple)
+        let qwen = ModelCatalog.downloadable.first { $0.repoID == "mlx-community/Qwen3-4B-Instruct-2507-4bit" }!
+        let b = ModelCatalog.budget(for: qwen)
+        XCTAssertGreaterThan(b.prompt, LocalBudget.apple.prompt * 2, "8K context carries much more than Apple's 4K")
+        XCTAssertNil(b.languages)
+        // A summary too long for Apple's model fits a downloaded one.
+        XCTAssertNotNil(AIRouter.complexity(of: .summarize, inputCharacters: 12_000))
+        XCTAssertNil(AIRouter.complexity(of: .summarize, inputCharacters: 12_000, budget: b))
+        // Llama 3.2 doesn't do Japanese.
+        let llama = ModelCatalog.downloadable.first { $0.id == "mlx.llama-3.2-3b-instruct" }!
+        XCTAssertNotNil(AIRouter.complexity(of: .translate, inputCharacters: 100, language: "Japanese", budget: ModelCatalog.budget(for: llama)))
+        for card in ModelCatalog.downloadable {
+            XCTAssertTrue(ModelCatalog.isDownloadable(card))
+            XCTAssertTrue(card.repoID.hasPrefix("mlx-community/"))
+            XCTAssertFalse(card.stopTokens.isEmpty)
+            XCTAssertLessThan(card.downloadBytes, 2_500_000_000, "keep weights under ~2.5 GB for the ~6 GB app limit")
+        }
+        XCTAssertFalse(ModelCatalog.isDownloadable(ModelCatalog.appleFoundation))
+    }
+
+    func testThinkTagFilter() {
+        func run(_ chunks: [String]) -> String {
+            var f = ThinkTagFilter()
+            return chunks.map { f.feed($0) }.joined() + f.finish()
+        }
+        XCTAssertEqual(run(["<thi", "nk>\nplan\n</th", "ink>\n\nHello", " world"]), "Hello world")
+        XCTAssertEqual(run(["Hello", " <think> stays"]), "Hello <think> stays")
+        XCTAssertEqual(run(["  ", "<", "b>bold</b>"]), "<b>bold</b>")
+        XCTAssertEqual(run(["<think>never closed"]), "")
+        XCTAssertEqual(run(["<th"]), "<th")
+    }
+}
+
 final class MeetingNotesTests: XCTestCase {
     func testChunksRespectTheLimitAndKeepEverything() {
         let sentence = "We agreed to ship the beta on Friday and Sam will write the release notes. "

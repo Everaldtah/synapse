@@ -142,6 +142,9 @@ final class AIService {
     private(set) var hasAPIKey = false
 
     @ObservationIgnored let apple = AppleFoundationLLM()
+    /// Downloadable open-weights models (observable on its own).
+    let models = LocalModelManager()
+    @ObservationIgnored private var mlx: [String: MLXLocalLLM] = [:]
 
     init() {
         hasBridgeToken = Keychain.get("bridgeToken") != nil
@@ -150,10 +153,24 @@ final class AIService {
 
     // MARK: - Models
 
-    /// The on-device language model in use.
+    /// The on-device language model in use: the chosen downloaded model, else Apple's built-in one.
     var local: LocalLLM {
-        _ = localModelID
-        return apple
+        let id = localModelID
+        guard let card = ModelCatalog.downloadable.first(where: { $0.id == id }), models.isDownloaded(card) else { return apple }
+        if let m = mlx[id] { return m }
+        let m = MLXLocalLLM(card: card, manager: models)
+        mlx[id] = m
+        return m
+    }
+
+    /// What one on-device request can carry with the model in use.
+    var localBudget: LocalBudget { local.budget }
+
+    /// Delete a downloaded model; if it was in use, go back to Apple's model.
+    func deleteModel(_ card: ModelCard) {
+        models.delete(card)
+        mlx[card.id] = nil
+        if localModelID == card.id { localModelID = ModelCatalog.appleFoundation.id }
     }
 
     /// Whether the on-device model can run right now.

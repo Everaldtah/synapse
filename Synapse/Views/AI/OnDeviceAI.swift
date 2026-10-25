@@ -6,6 +6,8 @@ import SynapseKit
 @MainActor
 protocol LocalLLM: AnyObject {
     var card: ModelCard { get }
+    /// How much text one request can carry.
+    var budget: LocalBudget { get }
     /// Why the model can't run right now, or nil when it's ready.
     var unavailableReason: String? { get }
     func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error>
@@ -48,6 +50,7 @@ enum LocalAIError: LocalizedError {
 @MainActor
 final class AppleFoundationLLM: LocalLLM {
     var card: ModelCard { ModelCatalog.appleFoundation }
+    var budget: LocalBudget { .apple }
 
     var unavailableReason: String? {
         switch SystemLanguageModel.default.availability {

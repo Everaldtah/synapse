@@ -38,6 +38,7 @@ struct ModelSwitcherSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var detail: ModelCard?
     @State private var checking = false
+    @State private var deleting: ModelCard?
 
     var body: some View {
         @Bindable var ai = ai
@@ -71,15 +72,14 @@ struct ModelSwitcherSheet: View {
                 }
 
                 Section {
-                    ForEach(ModelCatalog.onDeviceModels) { card in
-                        modelRow(card, selected: ai.localModelID == card.id, status: localStatus(card)) {
-                            ai.localModelID = card.id
-                        }
+                    modelRow(ModelCatalog.appleFoundation, selected: !isDownloadedChoice, status: localStatus(ModelCatalog.appleFoundation)) {
+                        ai.localModelID = ModelCatalog.appleFoundation.id
                     }
+                    ForEach(ModelCatalog.downloadable) { card in downloadableRow(card) }
                 } header: {
                     Label("On this iPhone", systemImage: "iphone")
                 } footer: {
-                    Text("Free and private: nothing leaves the phone, and it works offline.")
+                    Text("Free and private: nothing leaves the phone, and it works offline. Apple's model is built in; the others download once (Wi-Fi recommended) and run on the iPhone's GPU with an 8K-token window.")
                 }
 
                 Section {
@@ -101,6 +101,14 @@ struct ModelSwitcherSheet: View {
             .navigationTitle("AI models")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $detail) { card in ModelCardView(card: card) }
+            .confirmationDialog(deleting.map { "Delete \($0.name)? You can download it again later." } ?? "",
+                                isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                                titleVisibility: .visible) {
+                Button("Delete \(deleting.map { LocalModelManager.format(ai.models.bytesOnDisk($0)) } ?? "")", role: .destructive) {
+                    if let card = deleting { ai.deleteModel(card) }
+                    deleting = nil
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
@@ -164,9 +172,53 @@ struct ModelSwitcherSheet: View {
     private func localStatus(_ card: ModelCard) -> String {
         _ = ai.localCheck
         if card.id == ModelCatalog.appleFoundation.id {
-            return ai.apple.unavailableReason ?? "Ready"
+            return ai.apple.unavailableReason ?? "Ready · built in"
         }
-        return "Not downloaded"
+        switch ai.models.state(card) {
+        case .notDownloaded: return "Not downloaded"
+        case .downloading(let f): return "Downloading… \(Int(f * 100))%"
+        case .downloaded:
+            if let why = LocalModelManager.unsupportedReason { return why }
+            return ai.models.loadedID == card.id ? "Ready · in memory" : "Ready · downloaded"
+        case .failed(let why): return why
+        }
+    }
+
+    /// The chosen on-device model is a downloaded one that's still on the phone.
+    private var isDownloadedChoice: Bool {
+        ModelCatalog.downloadable.contains { $0.id == ai.localModelID && ai.models.isDownloaded($0) }
+    }
+
+    @ViewBuilder private func downloadableRow(_ card: ModelCard) -> some View {
+        let state = ai.models.state(card)
+        VStack(alignment: .leading, spacing: 8) {
+            modelRow(card, selected: ai.localModelID == card.id && state == .downloaded, status: localStatus(card),
+                     action: state == .downloaded ? { ai.localModelID = card.id } : nil)
+            switch state {
+            case .notDownloaded, .failed:
+                Button {
+                    ai.models.download(card)
+                } label: {
+                    Label("Download · \(LocalModelManager.format(card.downloadBytes))", systemImage: "arrow.down.circle")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+            case .downloading(let fraction):
+                HStack {
+                    ProgressView(value: fraction)
+                    Button("Cancel") { ai.models.cancelDownload(card) }
+                        .buttonStyle(.borderless)
+                        .font(.subheadline)
+                }
+            case .downloaded:
+                Button(role: .destructive) {
+                    deleting = card
+                } label: {
+                    Label("Delete download", systemImage: "trash").font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
     }
 
     @ViewBuilder private var cloudSection: some View {

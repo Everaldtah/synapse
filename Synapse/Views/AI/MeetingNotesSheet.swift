@@ -184,7 +184,9 @@ struct MeetingNotesSheet: View {
             }
             Text(progressLabel).font(.subheadline).foregroundStyle(.secondary)
             if phase == .writing {
-                Text(engine == .onDevice ? "Writing on this iPhone with \(ai.local.card.name)…" : "Writing with \(ai.cloudCard.name)…")
+                Text(engine == .onDevice ? (ai.models.loading ? "Loading \(ai.local.card.name) into memory…"
+                                                              : "Writing on this iPhone with \(ai.local.card.name)…")
+                                         : "Writing with \(ai.cloudCard.name)…")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Button("Cancel", role: .cancel) {
@@ -285,7 +287,7 @@ struct MeetingNotesSheet: View {
         let name = title
         let ai = self.ai
         task = Task { @MainActor in
-            var budget = route.engine == .onDevice ? AIRouter.localPromptBudget - 1_200 : 150_000
+            var budget = route.engine == .onDevice ? ai.localBudget.prompt - 1_200 : 150_000
             for attempt in 0..<2 {
                 do {
                     var used: AIAnswerInfo?

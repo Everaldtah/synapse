@@ -51,6 +51,39 @@ public struct AIRoute: Equatable, Sendable {
     }
 }
 
+/// How much text one on-device request can carry, in characters (English runs at roughly 3.5–4 characters a token).
+public struct LocalBudget: Equatable, Sendable {
+    /// Instructions + prompt for tasks with short replies (summaries, action items).
+    public var prompt: Int
+    /// Input for rewrites, which reply with about as much text as they're given.
+    public var rewrite: Int
+    /// Page context sent along with a selection.
+    public var pageContext: Int
+    /// Workspace sources for Ask.
+    public var ask: Int
+    /// Languages it writes well, by the names in the Translate menu; nil means all of them.
+    public var languages: Set<String>?
+
+    public init(prompt: Int, rewrite: Int, pageContext: Int, ask: Int, languages: Set<String>? = nil) {
+        self.prompt = prompt
+        self.rewrite = rewrite
+        self.pageContext = pageContext
+        self.ask = ask
+        self.languages = languages
+    }
+
+    /// Apple's on-device model: a 4,096-token window shared by prompt and reply.
+    public static let apple = LocalBudget(prompt: AIRouter.localPromptBudget, rewrite: AIRouter.localRewriteBudget,
+                                          pageContext: AIRouter.localPageContext, ask: AIRouter.localAskBudget,
+                                          languages: AIRouter.localLanguages)
+
+    /// A downloaded model run with a `tokens` context (prompt + reply), at a conservative 3.5 characters a token.
+    public static func context(tokens: Int, languages: Set<String>? = nil) -> LocalBudget {
+        let chars = Int(Double(tokens) * 3.5)
+        return LocalBudget(prompt: chars * 7 / 10, rewrite: chars * 4 / 10, pageContext: chars / 4, ask: chars / 2, languages: languages)
+    }
+}
+
 /// Picks the engine for each request. Pure logic, so it is unit-tested on Linux.
 public enum AIRouter {
     /// Characters of instructions + prompt the on-device model takes in one request. Its window is about 4,096 tokens
@@ -80,18 +113,19 @@ public enum AIRouter {
     /// - Parameters:
     ///   - inputCharacters: the selection (or the page when there's no selection).
     ///   - extraCharacters: anything else the prompt must carry, such as the page titles for link suggestions.
+    ///   - budget: what the on-device model in use can take.
     public static func complexity(of action: AIAction, inputCharacters: Int, extraCharacters: Int = 0,
-                                  instruction: String = "", language: String = "") -> String? {
+                                  instruction: String = "", language: String = "", budget: LocalBudget = .apple) -> String? {
         let rewrites: Set<AIAction> = [.improve, .fixGrammar, .shorter, .longer, .simplify, .toneProfessional, .toneCasual,
                                        .toneFriendly, .toneConfident, .translate, .continueWriting]
-        let budget = rewrites.contains(action) ? localRewriteBudget : localPromptBudget
-        if inputCharacters + extraCharacters > budget {
+        let limit = rewrites.contains(action) ? budget.rewrite : budget.prompt
+        if inputCharacters + extraCharacters > limit {
             return "Too long for the on-device model"
         }
         switch action {
-        case .suggestLinks where extraCharacters > localPromptBudget / 2:
+        case .suggestLinks where extraCharacters > budget.prompt / 2:
             return "Many pages to compare"
-        case .translate where !language.isEmpty && !localLanguages.contains(language):
+        case .translate where !language.isEmpty && !(budget.languages ?? [language]).contains(language):
             return "\(language) isn't an on-device language"
         case .custom:
             let lower = instruction.lowercased()

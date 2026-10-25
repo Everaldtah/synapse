@@ -31,10 +31,23 @@ public struct ModelCard: Identifiable, Hashable, Sendable {
     public var limits: [String]
     /// Devices and settings it needs.
     public var requirements: String
+    /// Downloadable models: the Hugging Face repo with MLX weights.
+    public var repoID: String
+    /// Downloadable models: end-of-turn tokens beyond the config's own.
+    public var stopTokens: [String]
+    /// Downloadable models: the context Synapse runs them with on the iPhone (memory-bound, not the model's maximum).
+    public var runContextTokens: Int
+    /// Languages it writes well (Translate menu names); nil means all of them.
+    public var languages: Set<String>?
 
     public init(id: String, name: String, maker: String, kind: Kind, parameters: String, quantization: String = "",
                 size: String, downloadBytes: Int64 = 0, contextWindow: String, maxOutput: String = "", summary: String,
-                goodAt: [String], limits: [String], requirements: String = "") {
+                goodAt: [String], limits: [String], requirements: String = "", repoID: String = "", stopTokens: [String] = [],
+                runContextTokens: Int = 0, languages: Set<String>? = nil) {
+        self.repoID = repoID
+        self.stopTokens = stopTokens
+        self.runContextTokens = runContextTokens
+        self.languages = languages
         self.id = id
         self.name = name
         self.maker = maker
@@ -121,8 +134,130 @@ public enum ModelCatalog {
     /// Every on-device language model Synapse can use (more are added as they ship).
     public static var onDeviceModels: [ModelCard] { [appleFoundation] + downloadable }
 
-    /// Open-weights models Synapse downloads and runs with MLX. Empty until the MLX runtime is in the app.
-    public static var downloadable: [ModelCard] = []
+    /// Whether a card is a model Synapse downloads (rather than one built into iOS).
+    public static func isDownloadable(_ card: ModelCard) -> Bool { !card.repoID.isEmpty }
+
+    /// What Synapse lets a downloaded model hold at once on the iPhone. Apps get about 6 GB on the iPhone 16 Pro Max and
+    /// 17 Pro Max alike, so the KV cache is capped well below each model's maximum.
+    public static let runContext = 8_192
+
+    static let downloadRequirements = "iPhone 16 Pro Max or newer (8 GB RAM or more). Keep Synapse open while it downloads; it's stored on this iPhone, not in iCloud backups."
+
+    /// Open-weights models Synapse downloads from Hugging Face (mlx-community 4-bit builds) and runs with MLX on the GPU.
+    /// Sizes are the weight files; parameters and context windows are the model makers' figures.
+    public static let downloadable: [ModelCard] = [
+        ModelCard(
+            id: "mlx.qwen3-4b-instruct-2507",
+            name: "Qwen3 4B Instruct",
+            maker: "Alibaba Qwen",
+            kind: .onDevice,
+            parameters: "4.0 billion parameters",
+            quantization: "4-bit",
+            size: "2.3 GB download",
+            downloadBytes: 2_277_297_844,
+            contextWindow: "262K tokens (8K on iPhone)",
+            maxOutput: "1,500 tokens a reply",
+            summary: "Best all-round local model: twice the context of Apple's, stronger reasoning",
+            goodAt: [
+                "Meeting notes, summaries and action items from longer text in one pass",
+                "Answering questions over several pages",
+                "Rewriting and translating in 100+ languages",
+                "Following detailed instructions",
+            ],
+            limits: [
+                "2.3 GB of storage and about 3.5 GB of memory while it runs",
+                "Slower than Apple's built-in model; replies take a few seconds to start",
+                "Still small: check facts, and use the cloud for hard reasoning or code",
+            ],
+            requirements: downloadRequirements,
+            repoID: "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+            stopTokens: ["<|im_end|>"],
+            runContextTokens: runContext
+        ),
+        ModelCard(
+            id: "mlx.llama-3.2-3b-instruct",
+            name: "Llama 3.2 3B Instruct",
+            maker: "Meta",
+            kind: .onDevice,
+            parameters: "3.2 billion parameters",
+            quantization: "4-bit",
+            size: "1.8 GB download",
+            downloadBytes: 1_824_807_894,
+            contextWindow: "128K tokens (8K on iPhone)",
+            maxOutput: "1,500 tokens a reply",
+            summary: "Steady summariser and rewriter",
+            goodAt: [
+                "Summaries, rewrites and tone changes",
+                "Reliable, plain output with no reasoning mode to manage",
+            ],
+            limits: [
+                "8 languages (English, German, French, Italian, Portuguese, Hindi, Spanish, Thai)",
+                "Weaker than Qwen3 4B at multi-step reasoning",
+            ],
+            requirements: downloadRequirements,
+            repoID: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+            stopTokens: ["<|eot_id|>"],
+            runContextTokens: runContext,
+            languages: ["English", "German", "French", "Italian", "Portuguese", "Hindi", "Spanish"]
+        ),
+        ModelCard(
+            id: "mlx.phi-4-mini-instruct",
+            name: "Phi-4 mini Instruct",
+            maker: "Microsoft",
+            kind: .onDevice,
+            parameters: "3.8 billion parameters",
+            quantization: "4-bit",
+            size: "2.2 GB download",
+            downloadBytes: 2_177_574_851,
+            contextWindow: "128K tokens (8K on iPhone)",
+            maxOutput: "1,500 tokens a reply",
+            summary: "Strongest small reasoner: maths, logic, structured answers",
+            goodAt: [
+                "Reasoning-heavy questions, maths and step-by-step answers",
+                "Structured output: tables, lists, outlines",
+            ],
+            limits: [
+                "Less natural prose than Qwen3 for notes and rewrites",
+                "About 24 languages",
+            ],
+            requirements: downloadRequirements,
+            repoID: "mlx-community/Phi-4-mini-instruct-4bit",
+            stopTokens: ["<|end|>"],
+            runContextTokens: runContext,
+            languages: ["English", "Spanish", "French", "German", "Italian", "Portuguese", "Dutch", "Japanese", "Korean",
+                        "Chinese (Simplified)", "Arabic", "Russian", "Turkish", "Polish"]
+        ),
+        ModelCard(
+            id: "mlx.qwen3-1.7b",
+            name: "Qwen3 1.7B",
+            maker: "Alibaba Qwen",
+            kind: .onDevice,
+            parameters: "1.7 billion parameters",
+            quantization: "4-bit",
+            size: "1.0 GB download",
+            downloadBytes: 982_341_391,
+            contextWindow: "32K tokens (8K on iPhone)",
+            maxOutput: "1,500 tokens a reply",
+            summary: "Small and fast, with a bigger window than Apple's model",
+            goodAt: [
+                "Quick summaries and rewrites of longer text",
+                "Low storage and memory use",
+            ],
+            limits: [
+                "The least capable here: keep tasks simple",
+                "Synapse turns its thinking mode off so replies come straight away",
+            ],
+            requirements: downloadRequirements,
+            repoID: "mlx-community/Qwen3-1.7B-4bit",
+            stopTokens: ["<|im_end|>"],
+            runContextTokens: runContext
+        ),
+    ]
+
+    /// The budget for an on-device model card.
+    public static func budget(for card: ModelCard) -> LocalBudget {
+        isDownloadable(card) ? .context(tokens: card.runContextTokens, languages: card.languages) : .apple
+    }
 
     // MARK: Claude (subscription via Claude Code, or the API)
 

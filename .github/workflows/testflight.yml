@@ -36,6 +36,9 @@ jobs:
           which xcodegen || brew install xcodegen
           xcodegen generate
 
+      - name: Metal toolchain (MLX compiles its shaders)
+        run: xcodebuild -downloadComponent MetalToolchain || echo "Metal toolchain already installed or unavailable"
+
       - name: App Store Connect key
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
@@ -50,7 +53,7 @@ jobs:
           xcodebuild archive \
             -project Synapse.xcodeproj -scheme Synapse -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Synapse.xcarchive" \
-            -allowProvisioningUpdates \
+            -allowProvisioningUpdates -skipPackagePluginValidation -skipMacroValidation \
             -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | grep -E --line-buffered 'error:|warning: .*(sign|provision)|\*\* ARCHIVE|Signing Identity|Provisioning Profile' || true

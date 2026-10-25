@@ -127,13 +127,15 @@ struct AIEditSheet: View {
         let pageText = model.markdown
         let reason = AIRouter.complexity(of: a, inputCharacters: a == .suggestLinks ? 600 : (sourceText.isEmpty ? pageText.count : sourceText.count),
                                          extraCharacters: a == .suggestLinks ? titles.joined(separator: "\n").count : 0,
-                                         instruction: instruction, language: language)
+                                         instruction: instruction, language: language, budget: ai.localBudget)
         let route = force.map { AIRoute(engine: $0, reason: "Chosen by you", complex: reason != nil) } ?? ai.route(complexReason: reason)
         let local = route.engine == .onDevice
         engine = route.engine
         routeReason = route.engine == .cloud && reason != nil ? reason : nil
-        // The on-device model has a ~4K-token window: the page is the subject when nothing is selected, else background.
-        let contextLimit = local ? (sourceText.isEmpty ? AIRouter.localPromptBudget - 1_000 : AIRouter.localPageContext) : 24_000
+        // On device the window is small (4K tokens for Apple's model, 8K for downloaded ones): the page is the subject
+        // when nothing is selected, else background.
+        let budget = ai.localBudget
+        let contextLimit = local ? (sourceText.isEmpty ? budget.prompt - 1_000 : budget.pageContext) : 24_000
         let req = AIPrompts.request(for: a, text: a == .suggestLinks ? "" : sourceText, pageTitle: page?.displayTitle ?? "",
                                     pageContext: pageText, language: language, instruction: instruction,
                                     linkCandidates: local ? Array(titles.prefix(120)) : titles, contextLimit: contextLimit)
@@ -189,7 +191,8 @@ struct AIEditSheet: View {
                     if running {
                         HStack(spacing: 8) {
                             ProgressView()
-                            Text(engine == .onDevice ? "Writing on this iPhone (\(ai.local.card.name))…"
+                            Text(engine == .onDevice ? (ai.models.loading ? "Loading \(ai.local.card.name) into memory…"
+                                                                           : "Writing on this iPhone (\(ai.local.card.name))…")
                                  : "\(ai.cloudCard.name) is writing (\(ai.provider.shortTitle))…")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
@@ -472,7 +475,7 @@ struct AskView: View {
         let engine = force ?? ai.route(complexReason: AIRouter.askComplexReason).engine
         // On device: fewer, shorter sources and history to fit the ~4K-token window.
         let local = engine == .onDevice
-        let sources = local ? AIPrompts.retrieve(q, in: store.workspace, limit: 3, budget: AIRouter.localAskBudget)
+        let sources = local ? AIPrompts.retrieve(q, in: store.workspace, limit: 4, budget: ai.localBudget.ask)
                             : AIPrompts.retrieve(q, in: store.workspace)
         let req = AIPrompts.ask(question: q, sources: sources, history: Array(history.suffix(local ? 2 : 10)))
         let answer = AskMessage(role: .assistant, text: "", sources: sources.map { $0.title }, question: q)
