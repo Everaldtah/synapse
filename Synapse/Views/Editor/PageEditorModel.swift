@@ -73,6 +73,10 @@ final class PageEditorModel {
     var actionsFor: UUID?
     var pagePickerFor: UUID?
     var aiRequest: EditorAIRequest?
+    /// `/model`: show the model switcher.
+    var showModelSwitcher = false
+    /// `/meeting`: the block to put meeting notes after.
+    var meetingAnchor: UUID?
     var commentsBlock: UUID?
     var showComments = false
     var scrollTarget: UUID?
@@ -495,6 +499,17 @@ final class PageEditorModel {
     func insertMarkdown(_ markdown: String, after id: UUID?) {
         let blocks = MarkdownCodec.parseBlocks(markdown)
         guard !blocks.isEmpty else { return }
+        var anchor = id ?? items.last?.id
+        let base = anchor.flatMap { item($0)?.block.indent } ?? 0
+        for var b in blocks {
+            b.indent += base
+            anchor = insert(b, after: anchor, focus: false)
+        }
+        scheduleCommit()
+    }
+
+    /// Insert ready-made blocks (meeting notes) after `id`.
+    func insertBlocks(_ blocks: [Block], after id: UUID?) {
         var anchor = id ?? items.last?.id
         let base = anchor.flatMap { item($0)?.block.indent } ?? 0
         for var b in blocks {

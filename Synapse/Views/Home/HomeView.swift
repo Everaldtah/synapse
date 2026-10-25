@@ -5,6 +5,7 @@ struct HomeView: View {
     @Environment(WorkspaceStore.self) private var store
     @Environment(AppModel.self) private var app
     @State private var showImporter = false
+    @State private var showMeeting = false
     @State private var renamingWorkspace = false
     @State private var workspaceName = ""
 
@@ -31,6 +32,7 @@ struct HomeView: View {
                 HStack(spacing: 10) {
                     QuickAction(title: "Today", symbol: "sun.max") { app.open(store.todayNote()) }
                     QuickAction(title: "New page", symbol: "square.and.pencil") { app.open(store.newPage()) }
+                    QuickAction(title: "Record", symbol: "mic") { showMeeting = true }
                     QuickAction(title: "Ask", symbol: "sparkles") { app.tab = .ask }
                     QuickAction(title: "Find", symbol: "arrow.right.circle") { app.showQuickSwitcher = true }
                 }
@@ -144,6 +146,7 @@ struct HomeView: View {
             Button("Cancel", role: .cancel) {}
         }
         .markdownImporter(isPresented: $showImporter, parent: nil)
+        .sheet(isPresented: $showMeeting) { MeetingNotesSheet() }
     }
 }
 

@@ -13,13 +13,14 @@ struct SettingsView: View {
     @State private var exporting = false
     @State private var showImporter = false
     @State private var confirmReset = false
+    @State private var showModels = false
 
     var body: some View {
         @Bindable var app = app
         Form {
             Section {
-                NavigationLink {
-                    ConnectClaudeView()
+                Button {
+                    showModels = true
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "sparkles")
@@ -28,13 +29,16 @@ struct SettingsView: View {
                             .frame(width: 36, height: 36)
                             .background(Palette.accent, in: RoundedRectangle(cornerRadius: 9))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Claude").font(.headline)
-                            Text(ai.statusText).font(.caption).foregroundStyle(ai.isConfigured ? Color.green : Color.secondary)
+                            Text("AI models").font(.headline).foregroundStyle(.primary)
+                            Text(ai.statusText).font(.caption).foregroundStyle(ai.canAnswer ? Color.green : Color.secondary)
                         }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                     }
                 }
+                NavigationLink { ConnectClaudeView() } label: { Label("Cloud connection", systemImage: "link") }
             } footer: {
-                Text("AI runs on your own Claude subscription through Claude Code on your computer, or on an Anthropic API key.")
+                Text("Everyday AI runs on this iPhone (Apple Intelligence). Complex tasks go to your Claude or ChatGPT subscription through Synapse Bridge on your computer, or to an Anthropic API key.")
             }
 
             Section("Appearance") {
@@ -89,6 +93,7 @@ struct SettingsView: View {
         .sheet(item: $app.pairing) { req in
             PairConfirmSheet(request: req)
         }
+        .sheet(isPresented: $showModels) { ModelSwitcherSheet() }
     }
 }
 
@@ -114,15 +119,21 @@ struct ConnectClaudeView: View {
                 .labelsHidden()
             }
 
-            if ai.provider == .bridge {
+            if ai.provider.usesBridge {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Your Claude subscription, via Claude Code").font(.headline)
-                        Text("Synapse Bridge runs on your Mac or PC next to the official Claude Code. You sign in to Claude there with Anthropic's own login, so Synapse never sees your password or tokens, and AI usage counts against your Pro or Max plan.")
+                        Text(ai.provider == .codex ? "Your ChatGPT subscription, via Codex" : "Your Claude subscription, via Claude Code").font(.headline)
+                        Text(ai.provider == .codex
+                             ? "Synapse Bridge runs on your Mac or PC next to the official Codex CLI. You sign in there with OpenAI's own login, so Synapse never sees your password or tokens, and usage counts against your ChatGPT plan."
+                             : "Synapse Bridge runs on your Mac or PC next to the official Claude Code. You sign in to Claude there with Anthropic's own login, so Synapse never sees your password or tokens, and AI usage counts against your Pro or Max plan.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
-                    stepRow(1, "On your computer, install Claude Code and sign in:", code: "claude auth login")
+                    if ai.provider == .codex {
+                        stepRow(1, "On your computer, install Codex and sign in:", code: "npm i -g @openai/codex && codex login")
+                    } else {
+                        stepRow(1, "On your computer, install Claude Code and sign in:", code: "claude auth login")
+                    }
                     stepRow(2, "Start the bridge (from the Synapse repo):", code: "node bridge/synapse-bridge.mjs")
                     stepRow(3, "Scan the QR code it shows, or open its pairing link on this iPhone.", code: nil)
                     Button { showScanner = true } label: { Label("Scan pairing QR code", systemImage: "qrcode.viewfinder") }
@@ -133,8 +144,18 @@ struct ConnectClaudeView: View {
                         LabeledContent("Address", value: ai.bridgeURL)
                         if !ai.bridgeName.isEmpty { LabeledContent("Computer", value: ai.bridgeName) }
                         if let acct = ai.bridgeAccount { LabeledContent("Claude account", value: acct) }
-                        Picker("Model", selection: $ai.bridgeModel) {
-                            ForEach(AIModelOption.bridge) { Text($0.title).tag($0.id) }
+                        if let codex = ai.codexInfo, codex.installed == true {
+                            LabeledContent("Codex", value: codex.loggedIn == true ? "Signed in\(codex.defaultModel.map { " · \($0)" } ?? "")" : "Not signed in")
+                        }
+                        if ai.provider == .codex {
+                            Picker("Model", selection: $ai.codexModel) {
+                                Text("Codex default").tag("default")
+                                ForEach(ai.codexInfo?.models ?? []) { m in Text(ModelCatalog.displayName(codex: m.id)).tag(m.id) }
+                            }
+                        } else {
+                            Picker("Model", selection: $ai.bridgeModel) {
+                                ForEach(AIModelOption.bridge) { Text($0.title).tag($0.id) }
+                            }
                         }
                         effortPicker
                         Button {
@@ -207,7 +228,7 @@ struct ConnectClaudeView: View {
                 }
             }
         }
-        .navigationTitle("Claude")
+        .navigationTitle("Cloud connection")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showScanner) {
             QRScannerSheet { code in
@@ -229,7 +250,7 @@ struct ConnectClaudeView: View {
             }
         }
         .task {
-            if ai.provider == .bridge && ai.isConfigured && ai.bridgeAccount == nil { _ = await ai.checkBridge() }
+            if ai.provider.usesBridge && ai.isConfigured && (ai.bridgeAccount == nil || ai.codexInfo == nil) { _ = await ai.checkBridge() }
         }
     }
 
@@ -249,7 +270,8 @@ struct ConnectClaudeView: View {
                 Task { @MainActor in
                     do {
                         let reply = try await ai.complete(AIRequest(system: "Reply in one short sentence.",
-                                                                   messages: [AIMessage(role: .user, content: "Say hello to the Synapse user and name the model you are.")]))
+                                                                   messages: [AIMessage(role: .user, content: "Say hello to the Synapse user and name the model you are.")]),
+                                                          on: .cloud)
                         testOutput = reply
                     } catch {
                         testOutput = "⚠️ " + error.localizedDescription

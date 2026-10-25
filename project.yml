@@ -3,7 +3,7 @@ name: Synapse
 options:
   bundleIdPrefix: com.everaldtah
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   developmentLanguage: en
   createIntermediateGroups: true
   groupSortPosition: top
@@ -77,6 +77,10 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         NSCameraUsageDescription: Synapse uses the camera to scan the pairing QR code shown by Synapse Bridge, and to take photos for your pages.
-        NSLocalNetworkUsageDescription: Synapse connects to Synapse Bridge on your computer so AI features can run on your own Claude subscription.
+        NSLocalNetworkUsageDescription: Synapse connects to Synapse Bridge on your computer so complex AI tasks can run on your own Claude or ChatGPT subscription.
+        NSMicrophoneUsageDescription: Synapse records meetings and voice notes, and transcribes them on this iPhone.
+        NSSpeechRecognitionUsageDescription: Synapse turns your recordings into text on this iPhone with Apple's on-device speech recognition.
+        UIBackgroundModes:
+          - audio
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true

@@ -99,9 +99,12 @@ public enum AIPrompts {
     """
 
     public static func request(for action: AIAction, text: String, pageTitle: String, pageContext: String,
-                               language: String = "English", instruction: String = "", linkCandidates: [String] = []) -> AIRequest {
+                               language: String = "English", instruction: String = "", linkCandidates: [String] = [],
+                               contextLimit: Int = 24_000) -> AIRequest {
         let selection = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ctx = pageContext.isEmpty ? "" : "\n\n<page title=\"\(escape(pageTitle))\">\n\(String(pageContext.prefix(24_000)))\n</page>"
+        // With a selection the page is only background, so a small context budget goes to the selection first.
+        let limit = selection.isEmpty ? contextLimit : min(contextLimit, max(800, contextLimit - selection.count))
+        let ctx = pageContext.isEmpty ? "" : "\n\n<page title=\"\(escape(pageTitle))\">\n\(String(pageContext.prefix(limit)))\n</page>"
         let task: String
         switch action {
         case .improve: task = "Improve the writing of the text below: clearer, better flow, same meaning and roughly the same length. Keep Markdown and [[links]]."

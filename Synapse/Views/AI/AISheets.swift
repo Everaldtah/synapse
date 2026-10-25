@@ -18,6 +18,10 @@ struct AIEditSheet: View {
     @State private var error: String?
     @State private var task: Task<Void, Never>?
     @State private var linkPicks: Set<String> = []
+    /// The engine and model behind the current result.
+    @State private var engine: AIEngine?
+    @State private var answer: AIAnswerInfo?
+    @State private var routeReason: String?
 
     private var isWholePage: Bool { request.blockIDs.count > 1 || (request.selectedText.isEmpty && request.range == nil) }
     private var sourceText: String {
@@ -47,6 +51,9 @@ struct AIEditSheet: View {
                         dismiss()
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    ModelChip(engine: engine, answer: running ? nil : answer)
+                }
             }
         }
         .presentationDetents([.medium, .large])
@@ -60,9 +67,9 @@ struct AIEditSheet: View {
 
     private var actionList: some View {
         List {
-            if !ai.isConfigured {
+            if !ai.canAnswer {
                 Section {
-                    Label("Connect Claude in Settings to use AI.", systemImage: "exclamationmark.triangle")
+                    Label("Turn on Apple Intelligence, or connect a cloud model in Settings, to use AI.", systemImage: "exclamationmark.triangle")
                     Button("Open Settings") {
                         dismiss()
                         app.tab = .settings
@@ -71,7 +78,7 @@ struct AIEditSheet: View {
             }
             Section {
                 HStack {
-                    TextField("Tell Claude what to do…", text: $instruction, axis: .vertical)
+                    TextField("Tell AI what to do…", text: $instruction, axis: .vertical)
                         .onSubmit { if !instruction.isEmpty { run(.custom) } }
                     Button { run(.custom) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                         .disabled(instruction.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -107,20 +114,34 @@ struct AIEditSheet: View {
 
     // MARK: Running
 
-    private func run(_ a: AIAction) {
+    /// Run an action; `force` picks the engine instead of the router (the "Redo with…" buttons).
+    private func run(_ a: AIAction, force: AIEngine? = nil) {
         action = a
         output = ""
         error = nil
         running = true
         linkPicks = []
+        answer = nil
         let page = store.page(model.pageID)
         let titles = store.workspace.livePages.filter { $0.id != model.pageID && !$0.isTemplate && $0.kind != .row }.map(\.displayTitle)
+        let pageText = model.markdown
+        let reason = AIRouter.complexity(of: a, inputCharacters: a == .suggestLinks ? 600 : (sourceText.isEmpty ? pageText.count : sourceText.count),
+                                         extraCharacters: a == .suggestLinks ? titles.joined(separator: "\n").count : 0,
+                                         instruction: instruction, language: language)
+        let route = force.map { AIRoute(engine: $0, reason: "Chosen by you", complex: reason != nil) } ?? ai.route(complexReason: reason)
+        let local = route.engine == .onDevice
+        engine = route.engine
+        routeReason = route.engine == .cloud && reason != nil ? reason : nil
+        // The on-device model has a ~4K-token window: the page is the subject when nothing is selected, else background.
+        let contextLimit = local ? (sourceText.isEmpty ? AIRouter.localPromptBudget - 1_000 : AIRouter.localPageContext) : 24_000
         let req = AIPrompts.request(for: a, text: a == .suggestLinks ? "" : sourceText, pageTitle: page?.displayTitle ?? "",
-                                    pageContext: model.markdown, language: language, instruction: instruction, linkCandidates: titles)
+                                    pageContext: pageText, language: language, instruction: instruction,
+                                    linkCandidates: local ? Array(titles.prefix(120)) : titles, contextLimit: contextLimit)
         task?.cancel()
         task = Task { @MainActor in
             do {
-                for try await chunk in ai.stream(req) { output += chunk }
+                for try await chunk in ai.stream(req, on: route.engine, fallback: force == nil) { output += chunk }
+                answer = ai.lastAnswer
                 if a == .suggestLinks {
                     linkPicks = Set(AIPrompts.parseLinkSuggestions(output).map { $0.title }.filter { store.workspace.resolve($0) != nil })
                 }
@@ -168,9 +189,19 @@ struct AIEditSheet: View {
                     if running {
                         HStack(spacing: 8) {
                             ProgressView()
-                            Text(ai.provider == .bridge ? "Claude is writing (via your subscription)…" : "Claude is writing…")
+                            Text(engine == .onDevice ? "Writing on this iPhone (\(ai.local.card.name))…"
+                                 : "\(ai.cloudCard.name) is writing (\(ai.provider.shortTitle))…")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
+                    } else if let answer {
+                        Label {
+                            Text(answer.note ?? routeReason.map { "Sent to \(answer.model): \($0.lowercased())" }
+                                 ?? (answer.engine == .onDevice ? "Written on this iPhone by \(answer.model)" : "Written by \(answer.model)"))
+                        } icon: {
+                            Image(systemName: answer.engine == .onDevice ? "iphone" : "cloud")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 .padding()
@@ -221,6 +252,16 @@ struct AIEditSheet: View {
                 Button {
                     if let a = action { run(a) }
                 } label: { Label("Try again", systemImage: "arrow.clockwise") }
+                if answer?.engine == .onDevice && ai.isConfigured {
+                    Button {
+                        if let a = action { run(a, force: .cloud) }
+                    } label: { Label("Redo with \(ai.cloudCard.name)", systemImage: "cloud") }
+                }
+                if answer?.engine == .cloud && ai.localReady {
+                    Button {
+                        if let a = action { run(a, force: .onDevice) }
+                    } label: { Label("Redo on this iPhone", systemImage: "iphone") }
+                }
                 Button {
                     let imported = MarkdownCodec.parse(output, fallbackTitle: action?.title ?? "AI draft")
                     let id = store.newPage(parent: model.pageID, title: imported.title, blocks: imported.blocks)
@@ -249,6 +290,9 @@ struct AskMessage: Identifiable, Equatable {
     var role: AIMessage.Role
     var text: String
     var sources: [String] = []
+    /// For answers: the question, and the model that wrote it.
+    var question: String?
+    var answer: AIAnswerInfo?
 }
 
 /// Chat with Claude about your workspace.
@@ -307,6 +351,9 @@ struct AskView: View {
         .navigationTitle("Ask Synapse")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ModelChip(engine: ai.route(complexReason: AIRouter.askComplexReason).engine)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { messages = [] } label: { Image(systemName: "square.and.pencil") }
                     .disabled(messages.isEmpty)
@@ -318,10 +365,10 @@ struct AskView: View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(Palette.accent)
             Text("Ask anything about your notes").font(.title2.bold())
-            Text("Synapse finds the relevant pages and Claude answers with links to them.")
+            Text("Synapse finds the relevant pages and answers with links to them. Questions across your workspace go to your cloud model when one is connected; otherwise they run on this iPhone with fewer pages.")
                 .foregroundStyle(.secondary)
-            if !ai.isConfigured {
-                Button { app.tab = .settings } label: { Label("Connect Claude first", systemImage: "link") }
+            if !ai.canAnswer {
+                Button { app.tab = .settings } label: { Label("Set up AI first", systemImage: "link") }
                     .buttonStyle(.borderedProminent)
             }
             ForEach(["What are my open tasks?", "Summarize what I wrote this week", "Which notes talk about ideas I haven't linked yet?"], id: \.self) { q in
@@ -373,6 +420,17 @@ struct AskView: View {
                 }
                 if !m.text.isEmpty {
                     HStack(spacing: 14) {
+                        if let a = m.answer {
+                            Label(a.note ?? a.model, systemImage: a.engine == .onDevice ? "iphone" : "cloud")
+                                .lineLimit(1)
+                        }
+                        if let q = m.question, !running, let a = m.answer {
+                            if a.engine == .onDevice && ai.isConfigured {
+                                Button { send(q, force: .cloud) } label: { Label("Ask \(ai.cloudCard.name)", systemImage: "cloud") }
+                            } else if a.engine == .cloud && ai.localReady {
+                                Button { send(q, force: .onDevice) } label: { Label("On iPhone", systemImage: "iphone") }
+                            }
+                        }
                         Button { UIPasteboard.general.string = m.text } label: { Image(systemName: "doc.on.doc") }
                         Button {
                             let imported = MarkdownCodec.parse(m.text, fallbackTitle: "Answer – \(DateText.short(Date()))")
@@ -403,21 +461,32 @@ struct AskView: View {
         let q = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !running else { return }
         draft = ""
+        send(q, force: nil)
+    }
+
+    /// Ask a question; `force` re-asks it on a chosen engine.
+    private func send(_ q: String, force: AIEngine?) {
+        guard !running else { return }
         let history = messages.filter { !$0.text.isEmpty }.map { AIMessage(role: $0.role, content: $0.text) }
-        messages.append(AskMessage(role: .user, text: q))
-        let sources = AIPrompts.retrieve(q, in: store.workspace)
-        let req = AIPrompts.ask(question: q, sources: sources, history: Array(history.suffix(10)))
-        let answer = AskMessage(role: .assistant, text: "", sources: sources.map { $0.title })
+        if force == nil { messages.append(AskMessage(role: .user, text: q)) }
+        let engine = force ?? ai.route(complexReason: AIRouter.askComplexReason).engine
+        // On device: fewer, shorter sources and history to fit the ~4K-token window.
+        let local = engine == .onDevice
+        let sources = local ? AIPrompts.retrieve(q, in: store.workspace, limit: 3, budget: AIRouter.localAskBudget)
+                            : AIPrompts.retrieve(q, in: store.workspace)
+        let req = AIPrompts.ask(question: q, sources: sources, history: Array(history.suffix(local ? 2 : 10)))
+        let answer = AskMessage(role: .assistant, text: "", sources: sources.map { $0.title }, question: q)
         let answerID = answer.id
         messages.append(answer)
         running = true
         task = Task { @MainActor in
             var text = ""
             do {
-                for try await chunk in ai.stream(req) {
+                for try await chunk in ai.stream(req, on: engine, fallback: force == nil) {
                     text += chunk
                     if let i = messages.firstIndex(where: { $0.id == answerID }) { messages[i].text = text }
                 }
+                if let i = messages.firstIndex(where: { $0.id == answerID }) { messages[i].answer = ai.lastAnswer }
             } catch is CancellationError {
             } catch {
                 if let i = messages.firstIndex(where: { $0.id == answerID }) {

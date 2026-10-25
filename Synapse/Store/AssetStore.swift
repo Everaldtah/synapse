@@ -38,6 +38,31 @@ enum AssetStore {
         }
     }
 
+    /// A new, unused file location in the asset folder (recordings).
+    static func newFileURL(ext: String) -> URL {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(UUID().uuidString + "." + ext)
+    }
+
+    /// The `asset:` reference for a file in the asset folder.
+    static func reference(for url: URL) -> String { "asset:" + url.lastPathComponent }
+
+    /// Copy a file (an imported recording) into the asset folder and return its URL.
+    static func importFile(_ source: URL) throws -> URL {
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let ext = source.pathExtension.isEmpty ? "m4a" : source.pathExtension.lowercased()
+        let target = newFileURL(ext: ext)
+        try FileManager.default.copyItem(at: source, to: target)
+        return target
+    }
+
+    static let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "aac", "caf", "aif", "aiff", "mp4", "mov"]
+
+    static func isAudio(_ source: String) -> Bool {
+        source.hasPrefix("asset:") && audioExtensions.contains((source as NSString).pathExtension.lowercased())
+    }
+
     static func image(for source: String) -> UIImage? {
         guard source.hasPrefix("asset:"), let url = url(for: source) else { return nil }
         return UIImage(contentsOfFile: url.path)

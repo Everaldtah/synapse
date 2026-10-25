@@ -3,10 +3,12 @@ import Observation
 import Security
 import SynapseKit
 
-/// Where AI requests go.
+/// Where cloud AI requests go (complex tasks, and everything in "Cloud only" mode).
 enum AIProviderKind: String, CaseIterable, Identifiable {
     /// Synapse Bridge on your computer, running Claude Code signed in to your Claude subscription.
     case bridge
+    /// Synapse Bridge on your computer, running Codex signed in to your ChatGPT subscription.
+    case codex
     /// Directly to the Claude API with your Anthropic API key.
     case apiKey
 
@@ -15,9 +17,20 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .bridge: return "Claude subscription (via Claude Code)"
+        case .codex: return "ChatGPT subscription (via Codex)"
         case .apiKey: return "Anthropic API key"
         }
     }
+
+    var shortTitle: String {
+        switch self {
+        case .bridge: return "Claude subscription"
+        case .codex: return "ChatGPT subscription"
+        case .apiKey: return "API key"
+        }
+    }
+
+    var usesBridge: Bool { self != .apiKey }
 }
 
 struct AIModelOption: Identifiable, Hashable {
@@ -47,7 +60,32 @@ struct AIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The Claude connection: settings, secrets in the Keychain, and streaming requests.
+/// Which model wrote the latest answer, for the model chip and the note under a reply.
+struct AIAnswerInfo: Equatable {
+    var engine: AIEngine
+    var model: String
+    /// Set when the request moved, e.g. "Sent to the cloud: too long for on-device".
+    var note: String?
+}
+
+/// What the bridge reported about Codex.
+struct CodexInfo: Decodable, Equatable {
+    struct Model: Decodable, Equatable, Identifiable {
+        var id: String
+        var name: String?
+        var description: String?
+        var contextWindow: Int?
+    }
+    var installed: Bool?
+    var loggedIn: Bool?
+    var method: String?
+    var version: String?
+    var defaultModel: String?
+    var models: [Model]?
+}
+
+/// The AI connection: on-device models, the cloud providers, routing between them, secrets in the Keychain,
+/// and streaming requests.
 @MainActor
 @Observable
 final class AIService {
@@ -55,6 +93,15 @@ final class AIService {
     var provider: AIProviderKind {
         get { access(keyPath: \.provider); return AIProviderKind(rawValue: UserDefaults.standard.string(forKey: "ai.provider") ?? "") ?? .bridge }
         set { withMutation(keyPath: \.provider) { UserDefaults.standard.set(newValue.rawValue, forKey: "ai.provider") } }
+    }
+    var routingMode: AIRoutingMode {
+        get { access(keyPath: \.routingMode); return AIRoutingMode(rawValue: UserDefaults.standard.string(forKey: "ai.routing") ?? "") ?? .localFirst }
+        set { withMutation(keyPath: \.routingMode) { UserDefaults.standard.set(newValue.rawValue, forKey: "ai.routing") } }
+    }
+    /// The on-device language model (`ModelCard.id`).
+    var localModelID: String {
+        get { access(keyPath: \.localModelID); return UserDefaults.standard.string(forKey: "ai.localModel") ?? ModelCatalog.appleFoundation.id }
+        set { withMutation(keyPath: \.localModelID) { UserDefaults.standard.set(newValue, forKey: "ai.localModel") } }
     }
     var bridgeURL: String {
         get { access(keyPath: \.bridgeURL); return UserDefaults.standard.string(forKey: "ai.bridgeURL") ?? "" }
@@ -72,6 +119,11 @@ final class AIService {
         get { access(keyPath: \.bridgeModel); return UserDefaults.standard.string(forKey: "ai.bridgeModel") ?? "default" }
         set { withMutation(keyPath: \.bridgeModel) { UserDefaults.standard.set(newValue, forKey: "ai.bridgeModel") } }
     }
+    /// A Codex model id, or "default" for the one set in Codex on the bridge computer.
+    var codexModel: String {
+        get { access(keyPath: \.codexModel); return UserDefaults.standard.string(forKey: "ai.codexModel") ?? "default" }
+        set { withMutation(keyPath: \.codexModel) { UserDefaults.standard.set(newValue, forKey: "ai.codexModel") } }
+    }
     /// low / medium / high
     var effort: String {
         get { access(keyPath: \.effort); return UserDefaults.standard.string(forKey: "ai.effort") ?? "medium" }
@@ -79,30 +131,86 @@ final class AIService {
     }
     /// What the bridge reported about the Claude account it's signed in to.
     var bridgeAccount: String?
+    var codexInfo: CodexInfo?
     var lastCheck: String?
+    /// The model behind the latest answer.
+    var lastAnswer: AIAnswerInfo?
+    /// Bumped when the on-device model's availability may have changed (checked on demand; iOS doesn't notify).
+    var localCheck = 0
 
     private(set) var hasBridgeToken = false
     private(set) var hasAPIKey = false
+
+    @ObservationIgnored let apple = AppleFoundationLLM()
 
     init() {
         hasBridgeToken = Keychain.get("bridgeToken") != nil
         hasAPIKey = Keychain.get("anthropicAPIKey") != nil
     }
 
+    // MARK: - Models
+
+    /// The on-device language model in use.
+    var local: LocalLLM {
+        _ = localModelID
+        return apple
+    }
+
+    /// Whether the on-device model can run right now.
+    var localReady: Bool {
+        _ = localCheck
+        return local.unavailableReason == nil
+    }
+
+    /// A cloud provider is connected.
     var isConfigured: Bool {
         switch provider {
-        case .bridge: return !bridgeURL.isEmpty && hasBridgeToken
+        case .bridge, .codex: return !bridgeURL.isEmpty && hasBridgeToken
         case .apiKey: return hasAPIKey
         }
     }
 
-    var statusText: String {
+    /// Either engine can answer.
+    var canAnswer: Bool { isConfigured || localReady }
+
+    /// The cloud model that complex tasks go to.
+    var cloudCard: ModelCard {
         switch provider {
         case .bridge:
-            if !isConfigured { return "Not connected" }
-            return bridgeAccount.map { "Connected · \($0)" } ?? "Paired with \(bridgeName.isEmpty ? bridgeURL : bridgeName)"
+            return ModelCatalog.claude(bridgeModel, kind: .subscription)
+        case .codex:
+            let id = codexModel == "default" ? (codexInfo?.defaultModel ?? "default") : codexModel
+            let m = codexInfo?.models?.first { $0.id == id }
+            return ModelCatalog.codex(id: id, name: m?.name, description: m?.description ?? "", contextWindow: m?.contextWindow)
         case .apiKey:
-            return hasAPIKey ? "API key saved · \(AIModelOption.api.first { $0.id == apiModel }?.title ?? apiModel)" : "No API key"
+            return ModelCatalog.claude(apiModel, kind: .api)
+        }
+    }
+
+    /// "Claude Opus 5.5 · Claude subscription".
+    var cloudTitle: String { "\(cloudCard.name) · \(provider.shortTitle)" }
+
+    /// The engine everyday (not complex) work uses right now.
+    var everydayEngine: AIEngine { route(complexReason: nil).engine }
+
+    /// Where a request goes.
+    func route(complexReason: String?) -> AIRoute {
+        AIRouter.route(complexReason: complexReason, mode: routingMode, localReady: localReady, cloudReady: isConfigured)
+    }
+
+    /// The model name for an engine ("Apple Foundation Model", "Claude Opus 5.5").
+    func modelName(_ engine: AIEngine) -> String {
+        engine == .onDevice ? local.card.name : cloudCard.name
+    }
+
+    var statusText: String {
+        let local = localReady ? "On-device ready" : "On-device off"
+        switch provider {
+        case .bridge, .codex:
+            if !isConfigured { return "\(local) · cloud not connected" }
+            return "\(local) · \(cloudCard.name) via \(bridgeName.isEmpty ? "bridge" : bridgeName)"
+        case .apiKey:
+            return hasAPIKey ? "\(local) · \(cloudCard.name) (API key)" : "\(local) · no API key"
         }
     }
 
@@ -113,7 +221,7 @@ final class AIService {
         bridgeName = name
         Keychain.set(token, for: "bridgeToken")
         hasBridgeToken = true
-        provider = .bridge
+        if !provider.usesBridge { provider = .bridge }
         bridgeAccount = nil
     }
 
@@ -123,6 +231,7 @@ final class AIService {
         bridgeURL = ""
         bridgeName = ""
         bridgeAccount = nil
+        codexInfo = nil
     }
 
     func setAPIKey(_ key: String) {
@@ -150,16 +259,17 @@ final class AIService {
         var name: String?
         var version: String?
         var claude: Claude?
+        var codex: CodexInfo?
     }
 
-    /// Ask the bridge which Claude account it runs on.
+    /// Ask the bridge which accounts and models it has.
     func checkBridge() async -> Result<BridgeHealth, AIError> {
         guard let base = URL(string: bridgeURL), let token = Keychain.get("bridgeToken") else {
             return .failure(AIError(message: "Not paired with a bridge."))
         }
         var req = URLRequest(url: base.appendingPathComponent("v1/health"))
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.timeoutInterval = 10
+        req.timeoutInterval = 15
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
@@ -167,6 +277,8 @@ final class AIService {
                 return .failure(AIError(message: code == 401 ? "The bridge rejected the pairing token. Pair again." : "The bridge answered \(code)."))
             }
             let health = try JSONDecoder().decode(BridgeHealth.self, from: data)
+            codexInfo = health.codex
+            if let n = health.name, !n.isEmpty { bridgeName = n }
             if let c = health.claude {
                 if c.loggedIn == true {
                     var s = c.email ?? "Claude account"
@@ -174,10 +286,16 @@ final class AIService {
                     bridgeAccount = s
                 } else {
                     bridgeAccount = nil
-                    return .failure(AIError(message: "Claude Code on \(health.name ?? "the bridge") isn't signed in. Run `claude auth login` there."))
+                    if provider == .bridge {
+                        return .failure(AIError(message: "Claude Code on \(health.name ?? "the bridge") isn't signed in. Run `claude auth login` there."))
+                    }
                 }
             }
-            if let n = health.name, !n.isEmpty { bridgeName = n }
+            if provider == .codex && health.codex?.loggedIn != true {
+                return .failure(AIError(message: health.codex?.installed == true
+                    ? "Codex on \(health.name ?? "the bridge") isn't signed in. Run `codex login` there."
+                    : "Codex isn't installed on \(health.name ?? "the bridge"). Install it with `npm i -g @openai/codex`, then run `codex login`."))
+            }
             lastCheck = "OK"
             return .success(health)
         } catch {
@@ -188,27 +306,70 @@ final class AIService {
 
     // MARK: - Streaming
 
-    /// Stream the reply's text.
-    func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
-        switch provider {
-        case .bridge:
-            guard let base = URL(string: bridgeURL), let token = Keychain.get("bridgeToken") else {
-                return Self.failing(AIError(message: "Connect your Claude account in Settings › Claude first."))
+    /// Stream the reply's text from an engine. On-device requests that fail before writing anything move to the cloud
+    /// in "On-device first" mode (when a cloud model is connected); `lastAnswer` says what happened.
+    func stream(_ request: AIRequest, on engine: AIEngine, fallback: Bool = true) -> AsyncThrowingStream<String, Error> {
+        switch engine {
+        case .cloud:
+            lastAnswer = AIAnswerInfo(engine: .cloud, model: cloudCard.name)
+            return cloudStream(request)
+        case .onDevice:
+            lastAnswer = AIAnswerInfo(engine: .onDevice, model: local.card.name)
+            let localStream = local.stream(request)
+            guard fallback, routingMode == .localFirst, isConfigured else { return localStream }
+            return AsyncThrowingStream { continuation in
+                let task = Task { @MainActor in
+                    var wrote = false
+                    do {
+                        for try await chunk in localStream {
+                            wrote = true
+                            continuation.yield(chunk)
+                        }
+                        continuation.finish()
+                    } catch let error as LocalAIError where !wrote {
+                        self.lastAnswer = AIAnswerInfo(engine: .cloud, model: self.cloudCard.name, note: "Sent to the cloud: \(error.shortReason)")
+                        do {
+                            for try await chunk in self.cloudStream(request) { continuation.yield(chunk) }
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
             }
-            return BridgeClient(baseURL: base, token: token, model: bridgeModel, effort: effort).stream(request)
-        case .apiKey:
-            guard let key = Keychain.get("anthropicAPIKey") else {
-                return Self.failing(AIError(message: "Add an Anthropic API key in Settings › Claude first."))
-            }
-            return AnthropicClient(apiKey: key, model: apiModel, effort: effort).stream(request)
         }
     }
 
     /// The whole reply at once.
-    func complete(_ request: AIRequest) async throws -> String {
+    func complete(_ request: AIRequest, on engine: AIEngine, fallback: Bool = true) async throws -> String {
         var out = ""
-        for try await chunk in stream(request) { out += chunk }
+        for try await chunk in stream(request, on: engine, fallback: fallback) { out += chunk }
         return out
+    }
+
+    private func cloudStream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
+        switch provider {
+        case .bridge, .codex:
+            guard let base = URL(string: bridgeURL), let token = Keychain.get("bridgeToken") else {
+                return Self.failing(AIError(message: "Pair Synapse Bridge in Settings › AI models to use \(provider.shortTitle)."))
+            }
+            let codex = provider == .codex
+            return BridgeClient(baseURL: base, token: token, engine: codex ? "codex" : "claude",
+                                model: codex ? codexModel : bridgeModel, effort: effort,
+                                onMeta: { [weak self] model in
+                                    guard let self else { return }
+                                    let name = codex ? ModelCatalog.displayName(codex: model) : ModelCatalog.displayName(claude: model)
+                                    if self.lastAnswer?.engine == .cloud { self.lastAnswer?.model = name }
+                                }).stream(request)
+        case .apiKey:
+            guard let key = Keychain.get("anthropicAPIKey") else {
+                return Self.failing(AIError(message: "Add an Anthropic API key in Settings › AI models first."))
+            }
+            return AnthropicClient(apiKey: key, model: apiModel, effort: effort).stream(request)
+        }
     }
 
     static func failing(_ error: Error) -> AsyncThrowingStream<String, Error> {
@@ -250,8 +411,12 @@ enum SSE {
 struct BridgeClient {
     var baseURL: URL
     var token: String
+    /// "claude" or "codex".
+    var engine: String
     var model: String
     var effort: String
+    /// Called with the exact model id the bridge reports for the reply.
+    var onMeta: @MainActor (String) -> Void = { _ in }
 
     func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -267,6 +432,7 @@ struct BridgeClient {
                         "system": request.system,
                         "messages": request.messages.map { ["role": $0.role.rawValue, "content": $0.content] },
                         "effort": effort,
+                        "engine": engine,
                     ]
                     if model != "default" { body["model"] = model }
                     req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -278,9 +444,12 @@ struct BridgeClient {
                         throw AIError(message: code == 401 ? "The bridge rejected the pairing token. Pair again in Settings." :
                                         "Bridge error \(code): \(BridgeClient.message(from: text))")
                     }
+                    let onMeta = self.onMeta
                     for try await ev in SSE.events(bytes) {
                         guard let json = try? JSONSerialization.jsonObject(with: Data(ev.data.utf8)) as? [String: Any] else { continue }
                         switch json["type"] as? String {
+                        case "meta":
+                            if let m = json["model"] as? String { await onMeta(m) }
                         case "delta":
                             if let t = json["text"] as? String { continuation.yield(t) }
                         case "error":

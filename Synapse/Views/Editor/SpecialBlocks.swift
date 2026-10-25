@@ -115,7 +115,10 @@ struct LinkCardBlockView: View {
 
     var body: some View {
         let b = item.block
-        if b.url.isEmpty {
+        if b.type == .file && AssetStore.isAudio(b.url) {
+            AudioAttachmentView(source: b.url, title: b.caption.isEmpty ? "Recording" : b.caption)
+                .padding(.vertical, 4)
+        } else if b.url.isEmpty {
             HStack {
                 Image(systemName: b.type.symbol).foregroundStyle(.secondary)
                 TextField(b.type == .file ? "Paste a file link" : "Paste a web link", text: $urlText)

@@ -1,15 +1,25 @@
 import SwiftUI
 import SynapseKit
 
-/// An entry in the "/" menu: a block to insert or an AI action.
+/// Slash commands that open a screen instead of inserting a block.
+enum SlashCommand: String, Hashable {
+    /// Switch AI models (`/model`).
+    case model
+    /// Record or import audio and write meeting notes (`/meeting`).
+    case meeting
+}
+
+/// An entry in the "/" menu: a block to insert, an AI action, or a command.
 enum SlashItem: Hashable, Identifiable {
     case block(BlockType)
     case ai(AIAction)
+    case command(SlashCommand)
 
     var id: String {
         switch self {
         case .block(let t): return "b." + t.rawValue
         case .ai(let a): return "a." + a.rawValue
+        case .command(let c): return "c." + c.rawValue
         }
     }
 
@@ -17,13 +27,17 @@ enum SlashItem: Hashable, Identifiable {
         switch self {
         case .block(let t): return t.title
         case .ai(let a): return a == .custom ? "Ask AI" : a.title
+        case .command(.model): return "Switch AI model"
+        case .command(.meeting): return "Meeting notes"
         }
     }
 
     var summary: String {
         switch self {
         case .block(let t): return t.summary
-        case .ai: return "Claude writes for you."
+        case .ai: return "AI writes for you."
+        case .command(.model): return "See and change the on-device and cloud models."
+        case .command(.meeting): return "Record, transcribe on device, and write notes."
         }
     }
 
@@ -31,6 +45,8 @@ enum SlashItem: Hashable, Identifiable {
         switch self {
         case .block(let t): return t.symbol
         case .ai(let a): return a.symbol
+        case .command(.model): return "cpu"
+        case .command(.meeting): return "mic"
         }
     }
 
@@ -38,6 +54,8 @@ enum SlashItem: Hashable, Identifiable {
         switch self {
         case .block(let t): return t.keywords
         case .ai(let a): return ["ai", "claude", a.rawValue.lowercased()]
+        case .command(.model): return ["model", "llm", "local", "ai", "claude", "codex", "switch"]
+        case .command(.meeting): return ["meeting", "record", "audio", "transcribe", "voice", "notes", "dictate"]
         }
     }
 }
@@ -47,7 +65,8 @@ enum SlashMenu {
         let blocks: [BlockType] = [.paragraph, .heading1, .heading2, .heading3, .todo, .bulleted, .numbered, .toggle, .quote, .callout,
                                    .divider, .code, .childPage, .pageLink, .childDatabase, .table, .image, .bookmark, .embed,
                                    .equation, .tableOfContents, .breadcrumb]
-        return blocks.map { SlashItem.block($0) } + [.ai(.custom), .ai(.continueWriting), .ai(.summarize), .ai(.actionItems), .ai(.brainstorm), .ai(.outline)]
+        return blocks.map { SlashItem.block($0) } + [.command(.meeting), .ai(.custom), .ai(.continueWriting), .ai(.summarize), .ai(.actionItems),
+                                                     .ai(.brainstorm), .ai(.outline), .command(.model)]
     }()
 
     static func matches(_ query: String) -> [SlashItem] {
@@ -71,16 +90,28 @@ extension PageEditorModel {
         case .block(let t):
             applySlash(t)
         case .ai(let action):
-            guard let s = slash, let block = self.item(s.blockID) else { slash = nil; return }
-            let ns = block.text as NSString
-            let len = min(ns.length - s.start, 1 + (s.query as NSString).length)
-            if s.start >= 0, len > 0, s.start + len <= ns.length {
-                block.text = ns.replacingCharacters(in: NSRange(location: s.start, length: len), with: "")
-            }
-            slash = nil
-            scheduleCommit()
+            guard let block = removeSlashText() else { return }
             aiRequest = EditorAIRequest(blockIDs: [block.id], selectedText: "", range: nil, action: action)
+        case .command(.model):
+            guard removeSlashText() != nil else { return }
+            showModelSwitcher = true
+        case .command(.meeting):
+            guard let block = removeSlashText() else { return }
+            meetingAnchor = block.id
         }
+    }
+
+    /// Delete the typed "/query" and close the menu; returns the block it was in.
+    private func removeSlashText() -> BlockItem? {
+        guard let s = slash, let block = self.item(s.blockID) else { slash = nil; return nil }
+        let ns = block.text as NSString
+        let len = min(ns.length - s.start, 1 + (s.query as NSString).length)
+        if s.start >= 0, len > 0, s.start + len <= ns.length {
+            block.text = ns.replacingCharacters(in: NSRange(location: s.start, length: len), with: "")
+        }
+        slash = nil
+        scheduleCommit()
+        return block
     }
 }
 

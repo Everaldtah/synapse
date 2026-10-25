@@ -123,6 +123,10 @@ struct DocumentContent: View {
         .sheet(item: $model.aiRequest) { req in
             AIEditSheet(request: req, model: model)
         }
+        .sheet(isPresented: $model.showModelSwitcher) { ModelSwitcherSheet() }
+        .sheet(item: Binding(get: { model.meetingAnchor.map { IDBox(id: $0) } }, set: { model.meetingAnchor = $0?.id })) { box in
+            MeetingNotesSheet(model: model, anchor: box.id)
+        }
         .sheet(isPresented: $model.showComments) {
             CommentsSheet(pageID: pageID, blockID: model.commentsBlock)
         }
