@@ -1,12 +1,16 @@
 # Synapse Bridge
 
-Synapse Bridge lets the Synapse iOS app use **your own Claude subscription**. It runs the official Claude Code
-CLI on your computer, signed in with your Claude account, and streams the replies to your phone.
+Synapse Bridge lets the Synapse iOS app use **your own Claude subscription** (and, optionally, **your ChatGPT
+subscription**) for complex AI tasks. It runs the official Claude Code CLI, or the official Codex CLI, on your
+computer, signed in with your own account, and streams the replies to your phone. Everyday AI in Synapse runs
+on the iPhone itself, so the bridge only sees the heavy requests.
 
 - You sign in with Anthropic's own flow (`claude auth login`). The bridge never reads, stores or sends your
   Claude credentials.
 - Claude Code runs unmodified, in print mode (`claude -p`), with **all tools turned off**. It only writes text and
   can't touch your files or run commands.
+- Codex runs unmodified (`codex exec`) in a **read-only sandbox** in an empty folder (`~/.synapse-bridge/work`),
+  without your Codex config, MCP servers or rules, and saves no session. Both CLIs run in that empty folder.
 - Usage counts against the Claude plan signed in on that computer, the same as typing into Claude Code yourself.
   Each person who uses Synapse this way runs their own bridge with their own account.
 
@@ -44,6 +48,7 @@ node synapse-bridge.mjs --url https://<your-computer>.<tailnet>.ts.net
 | `--host 0.0.0.0` | Interface to bind (`127.0.0.1` to allow only `tailscale serve`) |
 | `--url <url>` | Address written into the pairing code |
 | `--claude <path>` | Path to the `claude` binary |
+| `--codex <path>` | Path to the `codex` binary (optional; for ChatGPT via Codex) |
 | `--max 2` | Concurrent Claude runs |
 | `--new-token` | Make a new pairing token (unpairs phones) |
 | `--login` | Run `claude auth login` first |
@@ -53,7 +58,9 @@ The token is stored in `~/.synapse-bridge/config.json`. Every request needs it a
 
 ### API
 
-- `GET /v1/health` returns the bridge name and version, plus the signed-in Claude account (email and plan, never
-  tokens).
-- `POST /v1/chat` takes `{ system, messages: [{role, content}], model?, effort? }` and returns server-sent
-  events: `{"type":"delta","text":…}` … `{"type":"done"}`.
+- `GET /v1/health` returns the bridge name and version, the signed-in Claude account (email and plan, never
+  tokens), and Codex's status: installed, signed in, the default model from `~/.codex/config.toml`, and the model
+  list from Codex's own cache.
+- `POST /v1/chat` takes `{ system, messages: [{role, content}], engine?: "claude" | "codex", model?, effort? }` and
+  returns server-sent events: `{"type":"meta","engine":…,"model":…}` (the exact model answering),
+  `{"type":"delta","text":…}` … `{"type":"done"}`.

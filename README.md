@@ -4,10 +4,11 @@
 
 Synapse brings the Notion model (pages made of blocks, nested pages, and databases with table, board,
 calendar and gallery views) together with an Obsidian-style layer: `[[wiki links]]`, backlinks, `#tags`, and
-a live **Neural Graph** of how your notes connect. Its AI runs on Claude, either on **your own Claude
-subscription through Claude Code** or on an Anthropic API key.
+a live **Neural Graph** of how your notes connect. Everyday AI (transcripts, meeting notes, summaries, rewrites)
+runs **on the iPhone** with Apple Intelligence; complex tasks go to **your own Claude or ChatGPT subscription**
+through Synapse Bridge, or to an Anthropic API key.
 
-> Status: v0.1, early TestFlight. See [docs/PLAN.md](docs/PLAN.md) for the feature map and roadmap.
+> Status: v0.2, early TestFlight (local-first AI). See [docs/PLAN.md](docs/PLAN.md) for the feature map and roadmap.
 
 ## Features (v0.1)
 
@@ -23,11 +24,28 @@ subscription through Claude Code** or on an Anthropic API key.
   grouping and hidden properties.
 - **Linked thinking**: `[[Page]]`, `[[Page|alias]]` and `[[Page#Heading]]` links with autocomplete, backlinks
   plus unlinked mentions, `#nested/tags`, aliases, and a local or global force-directed graph.
-- **AI (Claude)**: Ask Synapse (questions answered from your pages with `[[citations]]`); improve, fix,
-  shorten, lengthen, change tone, translate, summarize, explain, action items, continue writing, brainstorm and
-  outline; plus **suggested links** between related notes.
+- **AI, local first**: improve, fix, shorten, lengthen, change tone, translate, summarize, explain, action
+  items, continue writing, brainstorm and outline run on Apple's on-device model (≈3B parameters, 4K-token window).
+  Ask Synapse (questions answered from your pages with `[[citations]]`), **suggested links**, long pages and
+  deep-reasoning requests go to the cloud model you pick. A model chip on every AI screen (and `/model`) shows
+  which model is answering and opens the switcher, with each model's size, context window and strengths.
+- **Meeting notes**: record (keeps going with the screen locked) or import audio, transcribe on device with
+  Apple's SpeechAnalyzer, and get a summary, key points, decisions and to-dos. Long recordings are noted in parts
+  that fit the on-device model, then merged. `/meeting` in a page, or **Record** on Home.
 - **Import and export**: Markdown files and Obsidian vaults (including Notion Markdown exports) in, and a zipped
   Markdown vault out.
+
+## Where AI runs
+
+| Mode | Everyday work | Complex work |
+|---|---|---|
+| On-device first (default) | Apple Foundation Model on the iPhone | Your cloud model (falls back to it if the device model can't) |
+| On-device only | iPhone | iPhone, with trimmed context |
+| Cloud only | Cloud | Cloud |
+
+Cloud models: Claude through Claude Code (your Claude plan), GPT models through Codex (your ChatGPT plan), or the
+Claude API with your key. Transcription always runs on the iPhone. Needs iOS 26 and Apple Intelligence (iPhone 15
+Pro or newer; built for iPhone 16 Pro Max and up).
 
 ## How AI uses your Claude subscription
 
@@ -41,7 +59,10 @@ Synapse (iPhone) ──pairing token──▶ Synapse Bridge (your computer) ─
 
 1. On your Mac or PC, install [Claude Code](https://claude.com/claude-code) and run `claude auth login`.
 2. Run the bridge: `cd bridge && npm install && node synapse-bridge.mjs`.
-3. In Synapse, go to **Settings › Claude › Scan pairing QR code**.
+3. In Synapse, go to **Settings › Cloud connection › Scan pairing QR code**.
+
+For ChatGPT, also install the [Codex CLI](https://github.com/openai/codex) (`npm i -g @openai/codex`), run
+`codex login`, and pick **ChatGPT subscription (via Codex)** in the model switcher.
 
 Synapse never sees your Claude password or tokens. Use [Tailscale](https://tailscale.com) to reach the bridge
 when you're away from home. The other option is to paste an Anthropic API key in Settings (it's stored in the
