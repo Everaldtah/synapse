@@ -114,7 +114,7 @@ final class AppleFoundationLLM: LocalLLM {
     }
 
     /// One prompt from a conversation (each request starts a fresh session).
-    static func prompt(_ messages: [AIMessage]) -> String {
+    nonisolated static func prompt(_ messages: [AIMessage]) -> String {
         guard let last = messages.last else { return "" }
         if messages.count == 1 { return last.content }
         let history = messages.dropLast().map { "<\($0.role.rawValue)>\n\($0.content)\n</\($0.role.rawValue)>" }.joined(separator: "\n")
