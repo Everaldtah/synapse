@@ -1,78 +1,211 @@
 import Foundation
 
-/// Turns a recording's transcript into meeting notes. Long transcripts are split into parts that fit the on-device
-/// model, each part is noted, and the part notes are merged (map-reduce), so a one-hour meeting works offline.
+/// The kind of notes to write from source material.
+public enum NoteStyle: String, CaseIterable, Identifiable, Codable, Sendable {
+    /// Summary, key points, decisions and action items.
+    case meeting
+    /// Concepts, details, definitions and review questions (lectures, lessons, reading).
+    case lecture
+    /// A short summary and key points.
+    case summary
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .meeting: return "Meeting notes"
+        case .lecture: return "Lecture & study notes"
+        case .summary: return "Summary"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .meeting: return "person.3"
+        case .lecture: return "graduationcap"
+        case .summary: return "text.append"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .meeting: return "Summary, key points, decisions and to-dos"
+        case .lecture: return "Concepts, details, definitions and review questions"
+        case .summary: return "A short summary and the key points"
+        }
+    }
+
+    var finalFormat: String {
+        switch self {
+        case .meeting:
+            return """
+            ## Summary
+            Two to four sentences on what it was about and what came out of it.
+
+            ## Key points
+            - One line per point.
+
+            ## Decisions
+            - One line per decision.
+
+            ## Action items
+            - [ ] Task — owner, due date if mentioned.
+
+            Leave out any section that would be empty.
+            """
+        case .lecture:
+            return """
+            ## Summary
+            Three to five sentences on the topic and its main ideas.
+
+            ## Key concepts
+            - **Concept** — a clear one- or two-line explanation.
+
+            ## Details and examples
+            - Important facts, formulas, dates and examples, one per line.
+
+            ## Definitions
+            - **Term** — definition.
+
+            ## Questions to review
+            - [ ] A question that checks understanding.
+
+            Leave out any section that would be empty.
+            """
+        case .summary:
+            return """
+            ## Summary
+            One short paragraph.
+
+            ## Key points
+            - Five to ten bullets.
+
+            Leave out any section that would be empty.
+            """
+        }
+    }
+
+    var partFormat: String {
+        switch self {
+        case .meeting:
+            return """
+            ### Points
+            - …
+            ### Decisions
+            - …
+            ### Action items
+            - [ ] …
+            Skip a heading if there is nothing for it.
+            """
+        case .lecture:
+            return """
+            ### Concepts
+            - …
+            ### Details
+            - …
+            ### Terms
+            - …
+            Skip a heading if there is nothing for it.
+            """
+        case .summary:
+            return """
+            ### Points
+            - …
+            """
+        }
+    }
+}
+
+/// One thing notes are made from: a recording, an audio or video file, a document, or text read from a photo.
+public struct NotesSource: Identifiable, Hashable, Sendable {
+    public enum Kind: String, Hashable, Sendable {
+        case recording, audio, document, image
+
+        public var label: String {
+            switch self {
+            case .recording: return "Recording"
+            case .audio: return "Audio"
+            case .document: return "Document"
+            case .image: return "Photo text"
+            }
+        }
+    }
+
+    public var id: UUID
+    public var name: String
+    public var kind: Kind
+    public var text: String
+    /// `asset:` reference of audio kept on the page.
+    public var asset: String?
+
+    public init(id: UUID = UUID(), name: String, kind: Kind, text: String, asset: String? = nil) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.text = text
+        self.asset = asset
+    }
+
+    public var isSpeech: Bool { kind == .recording || kind == .audio }
+}
+
+/// Turns source material (transcripts, documents, slides, photographed text) into notes. Long material is split into
+/// parts that fit the on-device model, each part is noted, and the part notes are merged (map-reduce), so an hour of
+/// audio or a long PDF works offline.
 public enum MeetingNotes {
     static let system = AIPrompts.baseSystem + """
 
-    You turn recording transcripts into clear meeting notes. Transcripts come from speech recognition, so fix obvious \
-    mis-hearings from context, but never invent facts. Keep names, numbers and dates exactly as said.
+    You turn source material (recording transcripts, documents, slides and text read from photos) into clear notes. \
+    Transcripts come from speech recognition and photo text from OCR, so fix obvious mis-hearings and misreadings from \
+    context, but never invent facts. Keep names, numbers, formulas and dates exactly as given.
     """
 
-    static let finalFormat = """
-    ## Summary
-    Two to four sentences on what the recording was about and what came out of it.
+    /// Every source as one text, each under a header when there are several.
+    public static func material(_ sources: [NotesSource]) -> String {
+        let used = sources.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if used.count == 1 { return used[0].text }
+        return used.map { "=== \($0.kind.label): \($0.name) ===\n\($0.text)" }.joined(separator: "\n\n")
+    }
 
-    ## Key points
-    - One line per point.
-
-    ## Decisions
-    - One line per decision.
-
-    ## Action items
-    - [ ] Task — owner, due date if mentioned.
-
-    Leave out any section that would be empty.
-    """
-
-    static let partFormat = """
-    ### Points
-    - …
-    ### Decisions
-    - …
-    ### Action items
-    - [ ] …
-    Skip a heading if there is nothing for it.
-    """
-
-    /// Notes for a whole transcript in one request (short recordings, or the cloud).
-    public static func notesRequest(transcript: String, title: String) -> AIRequest {
+    /// Notes for all the material in one request (short material, or the cloud).
+    public static func notesRequest(material: String, title: String, style: NoteStyle = .meeting) -> AIRequest {
         let user = """
-        Write meeting notes for the recording "\(AIPrompts.escape(title))" in exactly this Markdown format:
+        Write \(style.title.lowercased()) for "\(AIPrompts.escape(title))" from the material below, in exactly this Markdown \
+        format:
 
-        \(finalFormat)
+        \(style.finalFormat)
 
-        <transcript>
-        \(transcript)
-        </transcript>
+        <material>
+        \(material)
+        </material>
         """
         return AIRequest(system: system, messages: [AIMessage(role: .user, content: user)])
     }
 
-    /// Notes for one part of a long transcript (map step).
-    public static func partRequest(_ chunk: String, part: Int, of count: Int, title: String) -> AIRequest {
+    /// Notes for one part of long material (map step).
+    public static func partRequest(_ chunk: String, part: Int, of count: Int, title: String, style: NoteStyle = .meeting) -> AIRequest {
         let user = """
-        This is part \(part) of \(count) of the transcript of "\(AIPrompts.escape(title))". Write short notes on this part \
+        This is part \(part) of \(count) of the material for "\(AIPrompts.escape(title))". Write short notes on this part \
         only, as Markdown bullets under these headings:
 
-        \(partFormat)
+        \(style.partFormat)
 
-        <transcript part="\(part)">
+        <material part="\(part)">
         \(chunk)
-        </transcript>
+        </material>
         """
         return AIRequest(system: system, messages: [AIMessage(role: .user, content: user)])
     }
 
     /// Merge consecutive part notes. `final` gives the finished format; otherwise the result is part notes again
     /// (used when there are too many parts to merge at once).
-    public static func mergeRequest(_ partials: [String], title: String, final: Bool) -> AIRequest {
+    public static func mergeRequest(_ partials: [String], title: String, final: Bool, style: NoteStyle = .meeting) -> AIRequest {
         let parts = partials.enumerated().map { "<notes part=\"\($0.offset + 1)\">\n\($0.element)\n</notes>" }.joined(separator: "\n")
         let user = """
-        These are notes on consecutive parts of one recording, "\(AIPrompts.escape(title))". Merge them into one set of \
-        notes. Remove repeats, keep every distinct point, decision and action item. Use exactly this Markdown format:
+        These are notes on consecutive parts of the material for "\(AIPrompts.escape(title))". Merge them into one set of \
+        notes. Remove repeats and keep every distinct point. Use exactly this Markdown format:
 
-        \(final ? finalFormat : partFormat)
+        \(final ? style.finalFormat : style.partFormat)
 
         \(parts)
         """
@@ -154,17 +287,19 @@ public enum MeetingNotes {
 
     /// Run the whole pipeline with any model.
     /// - Parameters:
-    ///   - budget: the most transcript characters one request may carry (`AIRouter.localPromptBudget` minus the
-    ///     prompt, for the on-device model; something large for the cloud).
+    ///   - material: from `material(_:)`.
+    ///   - budget: the most material characters one request may carry (the on-device budget minus the prompt;
+    ///     something large for the cloud).
     ///   - complete: sends one request and returns the whole reply.
-    public static func generate(transcript: String, title: String, budget: Int,
+    public static func generate(material: String, title: String, style: NoteStyle = .meeting, budget: Int,
                                 complete: (AIRequest) async throws -> String,
-                                progress: (Step) -> Void = { _ in }) async throws -> String {
-        let parts = chunks(transcript, maxCharacters: budget)
+                                progress: (Step) -> Void = { _ in },
+                                isolation: isolated (any Actor)? = #isolation) async throws -> String {
+        let parts = chunks(material, maxCharacters: budget)
         guard !parts.isEmpty else { return "" }
         if parts.count == 1 {
             progress(Step(done: 0, total: 1, label: "Writing notes"))
-            let notes = try await complete(notesRequest(transcript: parts[0], title: title))
+            let notes = try await complete(notesRequest(material: parts[0], title: title, style: style))
             progress(Step(done: 1, total: 1, label: "Done"))
             return clean(notes)
         }
@@ -176,7 +311,7 @@ public enum MeetingNotes {
         for (i, part) in parts.enumerated() {
             try Task.checkCancellation()
             progress(Step(done: done, total: total, label: "Noting part \(i + 1) of \(parts.count)"))
-            notes.append(clean(try await complete(partRequest(part, part: i + 1, of: parts.count, title: title))))
+            notes.append(clean(try await complete(partRequest(part, part: i + 1, of: parts.count, title: title, style: style))))
             done += 1
         }
         while true {
@@ -184,14 +319,14 @@ public enum MeetingNotes {
             let groups = group(notes, budget: budget)
             if groups.count == 1 {
                 progress(Step(done: done, total: total, label: "Merging notes"))
-                let final = try await complete(mergeRequest(groups[0], title: title, final: true))
+                let final = try await complete(mergeRequest(groups[0], title: title, final: true, style: style))
                 progress(Step(done: total, total: total, label: "Done"))
                 return clean(final)
             }
             var merged: [String] = []
             for (i, g) in groups.enumerated() {
                 progress(Step(done: done, total: total, label: "Merging notes \(i + 1) of \(groups.count)"))
-                merged.append(g.count == 1 ? g[0] : clean(try await complete(mergeRequest(g, title: title, final: false))))
+                merged.append(g.count == 1 ? g[0] : clean(try await complete(mergeRequest(g, title: title, final: false, style: style))))
                 done += 1
                 total = max(total, done + 1)
             }
@@ -248,18 +383,28 @@ public enum MeetingNotes {
         return t
     }
 
-    /// Blocks for a meeting page: the notes, the recording, then the transcript inside a collapsed toggle.
-    public static func blocks(notes: String, transcript: String, audio: String?, audioCaption: String = "Recording") -> [Block] {
+    /// Blocks for a notes page: the notes, any audio (with a player), then each source's text inside a collapsed
+    /// toggle ("Transcript — name" for speech, "Text — name" for documents and photos).
+    public static func blocks(notes: String, sources: [NotesSource]) -> [Block] {
         var blocks = MarkdownCodec.parseBlocks(notes)
-        if let audio {
-            blocks.append(Block(type: .file, url: audio, caption: audioCaption))
+        for source in sources {
+            if let asset = source.asset {
+                blocks.append(Block(type: .file, url: asset, caption: source.name))
+            }
         }
-        let paragraphs = transcript.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        if !paragraphs.isEmpty {
-            blocks.append(Block(type: .toggle, text: "Transcript", collapsed: true))
+        for source in sources {
+            let paragraphs = source.text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            guard !paragraphs.isEmpty else { continue }
+            let label = sources.count == 1 && source.isSpeech ? "Transcript" : "\(source.isSpeech ? "Transcript" : "Text") — \(source.name)"
+            blocks.append(Block(type: .toggle, text: escapeMarkdown(label), collapsed: true))
             blocks += paragraphs.map { Block(type: .paragraph, text: escapeMarkdown($0), indent: 1) }
         }
         return blocks
+    }
+
+    /// Blocks for one recording (see `blocks(notes:sources:)`).
+    public static func blocks(notes: String, transcript: String, audio: String?, audioCaption: String = "Recording") -> [Block] {
+        blocks(notes: notes, sources: [NotesSource(name: audioCaption, kind: .recording, text: transcript, asset: audio)])
     }
 
     /// Transcripts are plain speech; keep characters that mean something in inline Markdown from turning into links,

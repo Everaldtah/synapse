@@ -75,8 +75,9 @@ final class PageEditorModel {
     var aiRequest: EditorAIRequest?
     /// `/model`: show the model switcher.
     var showModelSwitcher = false
-    /// `/meeting`: the block to put meeting notes after.
+    /// `/meeting`, `/upload` and the empty-page buttons: the block to put notes after, and how the sheet starts.
     var meetingAnchor: UUID?
+    var notesStart: MakeNotesSheet.Start = .record
     var commentsBlock: UUID?
     var showComments = false
     var scrollTarget: UUID?

@@ -84,8 +84,29 @@ struct ModelSwitcherSheet: View {
 
                 Section {
                     modelRow(ModelCatalog.appleSpeech, selected: true, status: "Used for every recording", action: nil)
+                    if ai.bridgeWhisper?.available == true {
+                        modelRow(ModelCatalog.whisperTurbo, selected: false,
+                                 status: "Ready on your computer (\(ai.bridgeWhisper?.device == "cuda" ? "GPU" : "CPU")) · pick it in Make notes", action: nil)
+                    }
                 } header: {
                     Label("Transcription", systemImage: "waveform")
+                }
+
+                if ai.bridgeSandbox != nil || ai.bridgeHarness != nil {
+                    Section {
+                        if let sandbox = ai.bridgeSandbox {
+                            LabeledContent("Linux sandbox", value: sandbox.available == true ? "Ready · \(sandbox.distro ?? "Ubuntu")" : "Not set up")
+                        }
+                        if let harness = ai.bridgeHarness {
+                            modelRow(ModelCatalog.claudeCodeHarness, selected: false,
+                                     status: harness.loggedIn == true ? "Connected\(harness.email.map { " · \($0)" } ?? "")"
+                                        : "Sign in once on your computer: wsl -d synapse-sandbox -u claude -- claude auth login",
+                                     action: nil)
+                        }
+                        AgentToolsSection()
+                    } header: {
+                        Label("Agent tools on your computer", systemImage: "desktopcomputer")
+                    }
                 }
 
                 cloudSection

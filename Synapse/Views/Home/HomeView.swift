@@ -32,7 +32,7 @@ struct HomeView: View {
                 HStack(spacing: 10) {
                     QuickAction(title: "Today", symbol: "sun.max") { app.open(store.todayNote()) }
                     QuickAction(title: "New page", symbol: "square.and.pencil") { app.open(store.newPage()) }
-                    QuickAction(title: "Record", symbol: "mic") { showMeeting = true }
+                    QuickAction(title: "Notes", symbol: "waveform.badge.plus") { showMeeting = true }
                     QuickAction(title: "Ask", symbol: "sparkles") { app.tab = .ask }
                     QuickAction(title: "Find", symbol: "arrow.right.circle") { app.showQuickSwitcher = true }
                 }
@@ -146,7 +146,7 @@ struct HomeView: View {
             Button("Cancel", role: .cancel) {}
         }
         .markdownImporter(isPresented: $showImporter, parent: nil)
-        .sheet(isPresented: $showMeeting) { MeetingNotesSheet() }
+        .sheet(isPresented: $showMeeting) { MakeNotesSheet() }
     }
 }
 

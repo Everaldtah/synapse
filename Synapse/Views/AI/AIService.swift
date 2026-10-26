@@ -84,6 +84,54 @@ struct CodexInfo: Decodable, Equatable {
     var models: [Model]?
 }
 
+/// What the bridge reported about Whisper on the computer.
+struct WhisperInfo: Decodable, Equatable {
+    var available: Bool?
+    var model: String?
+    var device: String?
+}
+
+/// What the bridge reported about its Linux sandbox.
+struct SandboxInfo: Decodable, Equatable {
+    var available: Bool?
+    var distro: String?
+    var tools: [String]?
+}
+
+/// What the bridge reported about the Claude Code harness in the sandbox.
+struct HarnessInfo: Decodable, Equatable {
+    var available: Bool?
+    var loggedIn: Bool?
+    var email: String?
+    var subscriptionType: String?
+    var claudeVersion: String?
+}
+
+/// A specific model for one run, or the router's pick.
+enum ModelChoice: Hashable {
+    case auto
+    /// An on-device model (`ModelCard.id`).
+    case local(String)
+    /// A cloud provider and its model id or alias.
+    case cloud(AIProviderKind, String)
+    /// Claude Code in the bridge's Linux sandbox, on the Claude subscription (model alias).
+    case harness(String)
+}
+
+struct ModelOption: Identifiable, Hashable {
+    var choice: ModelChoice
+    var title: String
+    var detail: String
+    var engine: AIEngine
+    var id: String { String(describing: choice) }
+}
+
+struct ModelOptionGroup: Identifiable {
+    var title: String
+    var options: [ModelOption]
+    var id: String { title }
+}
+
 /// The AI connection: on-device models, the cloud providers, routing between them, secrets in the Keychain,
 /// and streaming requests.
 @MainActor
@@ -132,6 +180,23 @@ final class AIService {
     /// What the bridge reported about the Claude account it's signed in to.
     var bridgeAccount: String?
     var codexInfo: CodexInfo?
+    /// What else the paired bridge offers: Whisper transcription, a Linux sandbox, the Claude Code harness.
+    var bridgeWhisper: WhisperInfo?
+    var bridgeSandbox: SandboxInfo?
+    var bridgeHarness: HarnessInfo?
+    /// Agent tools the user allows (Ask AI, Ask Synapse, notes).
+    var agentWeb: Bool {
+        get { access(keyPath: \.agentWeb); return UserDefaults.standard.object(forKey: "ai.agentWeb") as? Bool ?? true }
+        set { withMutation(keyPath: \.agentWeb) { UserDefaults.standard.set(newValue, forKey: "ai.agentWeb") } }
+    }
+    var agentShell: Bool {
+        get { access(keyPath: \.agentShell); return UserDefaults.standard.object(forKey: "ai.agentShell") as? Bool ?? true }
+        set { withMutation(keyPath: \.agentShell) { UserDefaults.standard.set(newValue, forKey: "ai.agentShell") } }
+    }
+    var agentHarness: Bool {
+        get { access(keyPath: \.agentHarness); return UserDefaults.standard.object(forKey: "ai.agentHarness") as? Bool ?? true }
+        set { withMutation(keyPath: \.agentHarness) { UserDefaults.standard.set(newValue, forKey: "ai.agentHarness") } }
+    }
     var lastCheck: String?
     /// The model behind the latest answer.
     var lastAnswer: AIAnswerInfo?
@@ -154,14 +219,7 @@ final class AIService {
     // MARK: - Models
 
     /// The on-device language model in use: the chosen downloaded model, else Apple's built-in one.
-    var local: LocalLLM {
-        let id = localModelID
-        guard let card = ModelCatalog.downloadable.first(where: { $0.id == id }), models.isDownloaded(card) else { return apple }
-        if let m = mlx[id] { return m }
-        let m = MLXLocalLLM(card: card, manager: models)
-        mlx[id] = m
-        return m
-    }
+    var local: LocalLLM { localLLM(localModelID) }
 
     /// What one on-device request can carry with the model in use.
     var localBudget: LocalBudget { local.budget }
@@ -277,6 +335,9 @@ final class AIService {
         var version: String?
         var claude: Claude?
         var codex: CodexInfo?
+        var whisper: WhisperInfo?
+        var sandbox: SandboxInfo?
+        var harness: HarnessInfo?
     }
 
     /// Ask the bridge which accounts and models it has.
@@ -295,6 +356,9 @@ final class AIService {
             }
             let health = try JSONDecoder().decode(BridgeHealth.self, from: data)
             codexInfo = health.codex
+            bridgeWhisper = health.whisper
+            bridgeSandbox = health.sandbox
+            bridgeHarness = health.harness
             if let n = health.name, !n.isEmpty { bridgeName = n }
             if let c = health.claude {
                 if c.loggedIn == true {
@@ -368,6 +432,19 @@ final class AIService {
     }
 
     private func cloudStream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
+        cloudStream(request, provider: provider, model: model(for: provider))
+    }
+
+    /// The model set for a provider in Settings.
+    func model(for provider: AIProviderKind) -> String {
+        switch provider {
+        case .bridge: return bridgeModel
+        case .codex: return codexModel
+        case .apiKey: return apiModel
+        }
+    }
+
+    private func cloudStream(_ request: AIRequest, provider: AIProviderKind, model: String) -> AsyncThrowingStream<String, Error> {
         switch provider {
         case .bridge, .codex:
             guard let base = URL(string: bridgeURL), let token = Keychain.get("bridgeToken") else {
@@ -375,7 +452,7 @@ final class AIService {
             }
             let codex = provider == .codex
             return BridgeClient(baseURL: base, token: token, engine: codex ? "codex" : "claude",
-                                model: codex ? codexModel : bridgeModel, effort: effort,
+                                model: model, effort: effort,
                                 onMeta: { [weak self] model in
                                     guard let self else { return }
                                     let name = codex ? ModelCatalog.displayName(codex: model) : ModelCatalog.displayName(claude: model)
@@ -385,8 +462,134 @@ final class AIService {
             guard let key = Keychain.get("anthropicAPIKey") else {
                 return Self.failing(AIError(message: "Add an Anthropic API key in Settings › AI models first."))
             }
-            return AnthropicClient(apiKey: key, model: apiModel, effort: effort).stream(request)
+            return AnthropicClient(apiKey: key, model: model, effort: effort).stream(request)
         }
+    }
+
+    // MARK: - Choosing a model for one run
+
+    /// The bridge's address and token, when paired.
+    var bridgeEndpoint: BridgeTools? {
+        guard let base = URL(string: bridgeURL), !bridgeURL.isEmpty, let token = Keychain.get("bridgeToken") else { return nil }
+        return BridgeTools(base: base, token: token)
+    }
+
+    /// An on-device model by card id (Apple's, or a downloaded one).
+    func localLLM(_ id: String) -> LocalLLM {
+        guard let card = ModelCatalog.downloadable.first(where: { $0.id == id }), models.isDownloaded(card) else { return apple }
+        if let m = mlx[id] { return m }
+        let m = MLXLocalLLM(card: card, manager: models)
+        mlx[id] = m
+        return m
+    }
+
+    /// Every model usable right now, grouped for a picker.
+    var modelGroups: [ModelOptionGroup] {
+        _ = localCheck
+        var groups: [ModelOptionGroup] = [ModelOptionGroup(title: "", options: [
+            ModelOption(choice: .auto, title: "Auto", detail: "\(modelName(everydayEngine)) for everyday work; your cloud model for complex work", engine: everydayEngine),
+        ])]
+        var local: [ModelOption] = []
+        if apple.unavailableReason == nil {
+            local.append(ModelOption(choice: .local(apple.card.id), title: apple.card.name, detail: apple.card.specLine, engine: .onDevice))
+        }
+        for card in ModelCatalog.downloadable where models.isDownloaded(card) && LocalModelManager.unsupportedReason == nil {
+            local.append(ModelOption(choice: .local(card.id), title: card.name, detail: card.specLine, engine: .onDevice))
+        }
+        if !local.isEmpty { groups.append(ModelOptionGroup(title: "On this iPhone", options: local)) }
+        let paired = !bridgeURL.isEmpty && hasBridgeToken
+        if paired && bridgeAccount != nil {
+            groups.append(ModelOptionGroup(title: "Claude subscription", options: AIModelOption.bridge.map { opt in
+                let card = ModelCatalog.claude(opt.id, kind: .subscription)
+                return ModelOption(choice: .cloud(.bridge, opt.id), title: card.name, detail: card.summary, engine: .cloud)
+            }))
+        }
+        if paired, bridgeHarness?.loggedIn == true {
+            groups.append(ModelOptionGroup(title: "Claude Code harness (web + Linux sandbox)", options: AIModelOption.bridge.map { opt in
+                let card = ModelCatalog.claude(opt.id, kind: .subscription)
+                return ModelOption(choice: .harness(opt.id), title: "\(card.name) · harness",
+                                   detail: "Searches the web, reads pages and runs code in the sandbox", engine: .cloud)
+            }))
+        }
+        if paired, codexInfo?.loggedIn == true {
+            var codex = [ModelOption(choice: .cloud(.codex, "default"), title: ModelCatalog.displayName(codex: codexInfo?.defaultModel ?? "default"),
+                                     detail: "Codex default", engine: .cloud)]
+            for m in codexInfo?.models ?? [] where m.id != codexInfo?.defaultModel {
+                codex.append(ModelOption(choice: .cloud(.codex, m.id), title: ModelCatalog.displayName(codex: m.id), detail: m.description ?? "", engine: .cloud))
+            }
+            groups.append(ModelOptionGroup(title: "ChatGPT subscription (Codex)", options: codex))
+        }
+        if hasAPIKey {
+            groups.append(ModelOptionGroup(title: "Anthropic API", options: AIModelOption.api.map {
+                ModelOption(choice: .cloud(.apiKey, $0.id), title: $0.title, detail: $0.detail, engine: .cloud)
+            }))
+        }
+        return groups
+    }
+
+    /// A fixed model for a choice (Auto resolved by the router), so a multi-step run stays on one model.
+    func concrete(_ choice: ModelChoice, complexReason: String? = nil) -> ModelChoice {
+        guard choice == .auto else { return choice }
+        return route(complexReason: complexReason).engine == .onDevice ? .local(localModelID) : .cloud(provider, model(for: provider))
+    }
+
+    /// The engine a choice runs on.
+    func engine(for choice: ModelChoice, complexReason: String? = nil) -> AIEngine {
+        switch choice {
+        case .auto: return route(complexReason: complexReason).engine
+        case .local: return .onDevice
+        case .cloud, .harness: return .cloud
+        }
+    }
+
+    /// The model name for a choice.
+    func name(for choice: ModelChoice, complexReason: String? = nil) -> String {
+        switch choice {
+        case .auto: return modelName(engine(for: .auto, complexReason: complexReason))
+        case .local(let id): return localLLM(id).card.name
+        case .cloud(let p, let m):
+            switch p {
+            case .codex: return ModelCatalog.displayName(codex: m == "default" ? (codexInfo?.defaultModel ?? "default") : m)
+            case .bridge, .apiKey: return ModelCatalog.claude(m, kind: p == .apiKey ? .api : .subscription).name
+            }
+        case .harness(let m): return ModelCatalog.claude(m, kind: .subscription).name + " · harness"
+        }
+    }
+
+    /// How much one request may carry with a choice.
+    func budget(for choice: ModelChoice, complexReason: String? = nil) -> LocalBudget {
+        switch choice {
+        case .local(let id): return localLLM(id).budget
+        case .cloud, .harness: return .context(tokens: 200_000)
+        case .auto: return engine(for: .auto, complexReason: complexReason) == .onDevice ? localBudget : .context(tokens: 200_000)
+        }
+    }
+
+    /// Stream a reply from a chosen model. Explicit choices never fall back; Auto behaves like `stream(_:on:)`.
+    func stream(_ request: AIRequest, choice: ModelChoice, complexReason: String? = nil, fallback: Bool = true) -> AsyncThrowingStream<String, Error> {
+        switch choice {
+        case .auto:
+            return stream(request, on: route(complexReason: complexReason).engine, fallback: fallback)
+        case .local(let id):
+            let llm = localLLM(id)
+            lastAnswer = AIAnswerInfo(engine: .onDevice, model: llm.card.name)
+            return llm.stream(request)
+        case .cloud(let p, let m):
+            lastAnswer = AIAnswerInfo(engine: .cloud, model: name(for: choice))
+            return cloudStream(request, provider: p, model: m)
+        case .harness(let m):
+            lastAnswer = AIAnswerInfo(engine: .cloud, model: name(for: choice))
+            guard let tools = bridgeEndpoint else { return Self.failing(AIError(message: "Pair Synapse Bridge first.")) }
+            return tools.harnessText(request, model: m) { [weak self] model in
+                self?.lastAnswer?.model = ModelCatalog.displayName(claude: model) + " · harness"
+            }
+        }
+    }
+
+    func complete(_ request: AIRequest, choice: ModelChoice, complexReason: String? = nil, fallback: Bool = true) async throws -> String {
+        var out = ""
+        for try await chunk in stream(request, choice: choice, complexReason: complexReason, fallback: fallback) { out += chunk }
+        return out
     }
 
     static func failing(_ error: Error) -> AsyncThrowingStream<String, Error> {

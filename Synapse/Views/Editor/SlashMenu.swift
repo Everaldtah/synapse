@@ -5,8 +5,10 @@ import SynapseKit
 enum SlashCommand: String, Hashable {
     /// Switch AI models (`/model`).
     case model
-    /// Record or import audio and write meeting notes (`/meeting`).
+    /// Record and make notes (`/meeting`).
     case meeting
+    /// Upload audio, documents or photos and make notes (`/upload`).
+    case files
 }
 
 /// An entry in the "/" menu: a block to insert, an AI action, or a command.
@@ -28,7 +30,8 @@ enum SlashItem: Hashable, Identifiable {
         case .block(let t): return t.title
         case .ai(let a): return a == .custom ? "Ask AI" : a.title
         case .command(.model): return "Switch AI model"
-        case .command(.meeting): return "Meeting notes"
+        case .command(.meeting): return "Record & make notes"
+        case .command(.files): return "Notes from files"
         }
     }
 
@@ -37,7 +40,8 @@ enum SlashItem: Hashable, Identifiable {
         case .block(let t): return t.summary
         case .ai: return "AI writes for you."
         case .command(.model): return "See and change the on-device and cloud models."
-        case .command(.meeting): return "Record, transcribe on device, and write notes."
+        case .command(.meeting): return "Record, transcribe, and write notes."
+        case .command(.files): return "Upload audio, documents of any type or photos."
         }
     }
 
@@ -47,6 +51,7 @@ enum SlashItem: Hashable, Identifiable {
         case .ai(let a): return a.symbol
         case .command(.model): return "cpu"
         case .command(.meeting): return "mic"
+        case .command(.files): return "doc.badge.plus"
         }
     }
 
@@ -55,7 +60,8 @@ enum SlashItem: Hashable, Identifiable {
         case .block(let t): return t.keywords
         case .ai(let a): return ["ai", "claude", a.rawValue.lowercased()]
         case .command(.model): return ["model", "llm", "local", "ai", "claude", "codex", "switch"]
-        case .command(.meeting): return ["meeting", "record", "audio", "transcribe", "voice", "notes", "dictate"]
+        case .command(.meeting): return ["meeting", "record", "audio", "transcribe", "voice", "notes", "dictate", "lecture"]
+        case .command(.files): return ["upload", "file", "files", "pdf", "document", "import", "attach", "photo", "scan", "notes"]
         }
     }
 }
@@ -65,7 +71,7 @@ enum SlashMenu {
         let blocks: [BlockType] = [.paragraph, .heading1, .heading2, .heading3, .todo, .bulleted, .numbered, .toggle, .quote, .callout,
                                    .divider, .code, .childPage, .pageLink, .childDatabase, .table, .image, .bookmark, .embed,
                                    .equation, .tableOfContents, .breadcrumb]
-        return blocks.map { SlashItem.block($0) } + [.command(.meeting), .ai(.custom), .ai(.continueWriting), .ai(.summarize), .ai(.actionItems),
+        return blocks.map { SlashItem.block($0) } + [.command(.meeting), .command(.files), .ai(.custom), .ai(.continueWriting), .ai(.summarize), .ai(.actionItems),
                                                      .ai(.brainstorm), .ai(.outline), .command(.model)]
     }()
 
@@ -97,6 +103,11 @@ extension PageEditorModel {
             showModelSwitcher = true
         case .command(.meeting):
             guard let block = removeSlashText() else { return }
+            notesStart = .record
+            meetingAnchor = block.id
+        case .command(.files):
+            guard let block = removeSlashText() else { return }
+            notesStart = .files
             meetingAnchor = block.id
         }
     }

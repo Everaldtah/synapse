@@ -131,6 +131,39 @@ public enum ModelCatalog {
         requirements: "iOS 26; the language model downloads the first time you transcribe in that language"
     )
 
+    /// OpenAI's Whisper large-v3-turbo, run by Synapse Bridge on the computer's GPU.
+    public static let whisperTurbo = ModelCard(
+        id: "bridge.whisper",
+        name: "Whisper large-v3 turbo",
+        maker: "OpenAI (open weights)",
+        kind: .subscription,
+        parameters: "809 million parameters",
+        quantization: "16-bit",
+        size: "1.6 GB, on your computer (runs on its GPU)",
+        contextWindow: "Any length (30-second windows)",
+        summary: "Accurate transcription on your computer",
+        goodAt: ["Accents, noisy rooms and technical vocabulary", "99 languages, detected automatically", "Fast on an NVIDIA GPU"],
+        limits: ["Needs the bridge computer on", "No speaker labels"],
+        requirements: "Synapse Bridge with Python, openai-whisper and the model downloaded"
+    )
+
+    /// Claude Code on the Claude subscription, inside the bridge's Linux sandbox.
+    public static let claudeCodeHarness = ModelCard(
+        id: "bridge.harness",
+        name: "Claude Code harness",
+        maker: "Anthropic",
+        kind: .subscription,
+        parameters: notPublished,
+        size: "Claude subscription, running in a Linux sandbox on your computer",
+        contextWindow: "1M tokens",
+        maxOutput: "128K tokens",
+        summary: "Claude with web search, web pages and a Linux shell",
+        goodAt: ["Research with sources", "Running code on your files: data, conversions, charts",
+                 "Multi-step tasks the on-device models hand it"],
+        limits: ["Slower: it plans and uses tools", "Counts against your Claude plan", "Needs the bridge computer on"],
+        requirements: "Synapse Bridge sandbox with Claude Code signed in (one-time sign-in)"
+    )
+
     /// Every on-device language model Synapse can use (more are added as they ship).
     public static var onDeviceModels: [ModelCard] { [appleFoundation] + downloadable }
 

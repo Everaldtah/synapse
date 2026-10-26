@@ -22,6 +22,7 @@ struct AIEditSheet: View {
     @State private var engine: AIEngine?
     @State private var answer: AIAnswerInfo?
     @State private var routeReason: String?
+    @State private var steps: [AgentStep] = []
 
     private var isWholePage: Bool { request.blockIDs.count > 1 || (request.selectedText.isEmpty && request.range == nil) }
     private var sourceText: String {
@@ -105,6 +106,7 @@ struct AIEditSheet: View {
             Section("Generate") {
                 ForEach(AIAction.generateGroup) { a in actionButton(a) }
             }
+            AgentToolsSection()
         }
     }
 
@@ -140,9 +142,18 @@ struct AIEditSheet: View {
                                     pageContext: pageText, language: language, instruction: instruction,
                                     linkCandidates: local ? Array(titles.prefix(120)) : titles, contextLimit: contextLimit)
         task?.cancel()
+        steps = []
+        // "Ask AI…" and "Explain" may use tools: the web, the Linux sandbox, Claude Code.
+        let runner = AgentRunner(ai: ai)
+        let tools = a == .custom || a == .explain ? runner.tools() : []
+        let choice: ModelChoice = route.engine == .onDevice ? .local(ai.localModelID) : .cloud(ai.provider, ai.model(for: ai.provider))
         task = Task { @MainActor in
             do {
-                for try await chunk in ai.stream(req, on: route.engine, fallback: force == nil) { output += chunk }
+                if tools.isEmpty {
+                    for try await chunk in ai.stream(req, on: route.engine, fallback: force == nil) { output += chunk }
+                } else {
+                    output = try await runner.run(req, choice: choice, tools: tools, steps: $steps)
+                }
                 answer = ai.lastAnswer
                 if a == .suggestLinks {
                     linkPicks = Set(AIPrompts.parseLinkSuggestions(output).map { $0.title }.filter { store.workspace.resolve($0) != nil })
@@ -162,6 +173,7 @@ struct AIEditSheet: View {
                     if let error {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                     }
+                    AgentStepsView(steps: steps)
                     if action == .suggestLinks && !running {
                         let suggestions = AIPrompts.parseLinkSuggestions(output)
                             .filter { store.workspace.resolve($0.title) != nil }
@@ -296,6 +308,8 @@ struct AskMessage: Identifiable, Equatable {
     /// For answers: the question, and the model that wrote it.
     var question: String?
     var answer: AIAnswerInfo?
+    /// Tool steps the agent took for this answer.
+    var steps: [AgentStep] = []
 }
 
 /// Chat with Claude about your workspace.
@@ -307,6 +321,7 @@ struct AskView: View {
     @State private var draft = ""
     @State private var running = false
     @State private var task: Task<Void, Never>?
+    @State private var liveSteps: [AgentStep] = []
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -318,9 +333,10 @@ struct AskView: View {
                         bubble(m).id(m.id)
                     }
                     if running {
+                        AgentStepsView(steps: liveSteps)
                         HStack(spacing: 8) {
                             ProgressView()
-                            Text("Reading your pages…").font(.footnote).foregroundStyle(.secondary)
+                            Text(liveSteps.isEmpty ? "Reading your pages…" : "Working…").font(.footnote).foregroundStyle(.secondary)
                         }
                         .id("progress")
                     }
@@ -398,6 +414,7 @@ struct AskView: View {
                     .background(Palette.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
+                if !m.steps.isEmpty { AgentStepsView(steps: m.steps) }
                 Text(linkified(m.text))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -482,12 +499,24 @@ struct AskView: View {
         let answerID = answer.id
         messages.append(answer)
         running = true
+        liveSteps = []
+        let runner = AgentRunner(ai: ai)
+        let tools = runner.tools()
+        let choice: ModelChoice = engine == .onDevice ? .local(ai.localModelID) : .cloud(ai.provider, ai.model(for: ai.provider))
         task = Task { @MainActor in
             var text = ""
             do {
-                for try await chunk in ai.stream(req, on: engine, fallback: force == nil) {
-                    text += chunk
-                    if let i = messages.firstIndex(where: { $0.id == answerID }) { messages[i].text = text }
+                if tools.isEmpty {
+                    for try await chunk in ai.stream(req, on: engine, fallback: force == nil) {
+                        text += chunk
+                        if let i = messages.firstIndex(where: { $0.id == answerID }) { messages[i].text = text }
+                    }
+                } else {
+                    text = try await runner.run(req, choice: choice, tools: tools, steps: $liveSteps)
+                    if let i = messages.firstIndex(where: { $0.id == answerID }) {
+                        messages[i].text = text
+                        messages[i].steps = liveSteps
+                    }
                 }
                 if let i = messages.firstIndex(where: { $0.id == answerID }) { messages[i].answer = ai.lastAnswer }
             } catch is CancellationError {
@@ -498,6 +527,29 @@ struct AskView: View {
                 }
             }
             running = false
+        }
+    }
+}
+
+/// Which tools AI may use: the web (from the iPhone), the Linux sandbox and Claude Code (on the bridge computer).
+struct AgentToolsSection: View {
+    @Environment(AIService.self) private var ai
+
+    var body: some View {
+        @Bindable var ai = ai
+        Section {
+            Toggle(isOn: $ai.agentWeb) { Label("Search and read the web", systemImage: "globe") }
+            if ai.bridgeSandbox?.available == true {
+                Toggle(isOn: $ai.agentShell) { Label("Linux shell on your computer (sandbox)", systemImage: "terminal") }
+            }
+            if ai.bridgeHarness?.loggedIn == true {
+                Toggle(isOn: $ai.agentHarness) { Label("Hand hard tasks to Claude Code", systemImage: "sparkles.rectangle.stack") }
+            }
+        } header: {
+            Text("Tools for Ask AI")
+        } footer: {
+            Text(ai.bridgeSandbox?.available == true ? "Commands run automatically inside the sandbox on your computer, never on its own files."
+                 : "Pair Synapse Bridge with its Linux sandbox to let AI run code and use Claude Code.")
         }
     }
 }

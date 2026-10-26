@@ -119,7 +119,7 @@ final class MeetingNotesTests: XCTestCase {
 
     func testShortTranscriptIsOneRequest() async throws {
         var requests: [AIRequest] = []
-        let notes = try await MeetingNotes.generate(transcript: "Quick sync. Ana owns the budget.", title: "Sync", budget: 6_000) { req in
+        let notes = try await MeetingNotes.generate(material: "Quick sync. Ana owns the budget.", title: "Sync", budget: 6_000) { req in
             requests.append(req)
             return "```markdown\n## Summary\nA quick sync.\n```"
         }
@@ -134,9 +134,9 @@ final class MeetingNotesTests: XCTestCase {
         var merges = 0
         var finals = 0
         var steps: [MeetingNotes.Step] = []
-        let notes = try await MeetingNotes.generate(transcript: transcript, title: "Long", budget: 1_500, complete: { req in
+        let notes = try await MeetingNotes.generate(material: transcript, title: "Long", budget: 1_500, complete: { req in
             let text = req.messages[0].content
-            if text.contains("<transcript part=") {
+            if text.contains("<material part=") {
                 parts += 1
                 return "### Points\n- part \(parts) " + String(repeating: "detail ", count: 40)
             }

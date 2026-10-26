@@ -67,6 +67,16 @@ struct DocumentContent: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 4)
 
+                    if isBlank && !model.readOnly {
+                        EmptyPageActions(
+                            record: { startNotes(.record) },
+                            files: { startNotes(.files) },
+                            ask: { model.aiRequest = EditorAIRequest(blockIDs: model.items.map(\.id), selectedText: "", range: nil, action: .custom) }
+                        )
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                    }
+
                     Color.clear
                         .frame(height: 120)
                         .contentShape(Rectangle())
@@ -125,7 +135,7 @@ struct DocumentContent: View {
         }
         .sheet(isPresented: $model.showModelSwitcher) { ModelSwitcherSheet() }
         .sheet(item: Binding(get: { model.meetingAnchor.map { IDBox(id: $0) } }, set: { model.meetingAnchor = $0?.id })) { box in
-            MeetingNotesSheet(model: model, anchor: box.id)
+            MakeNotesSheet(model: model, anchor: box.id, start: model.notesStart)
         }
         .sheet(isPresented: $model.showComments) {
             CommentsSheet(pageID: pageID, blockID: model.commentsBlock)
@@ -135,6 +145,16 @@ struct DocumentContent: View {
         .sheet(item: Binding(get: { exportURL.map { ShareFile(url: $0) } }, set: { exportURL = $0?.url })) { file in
             ShareSheet(items: [file.url])
         }
+    }
+
+    /// A new page: one empty text block.
+    private var isBlank: Bool {
+        model.items.count <= 1 && model.items.allSatisfy { $0.text.isEmpty && $0.block.type == .paragraph }
+    }
+
+    private func startNotes(_ start: MakeNotesSheet.Start) {
+        model.notesStart = start
+        model.meetingAnchor = model.items.first?.id
     }
 
     private func focusFirstBlock() {
