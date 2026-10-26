@@ -11,7 +11,7 @@ options:
 settings:
   base:
     DEVELOPMENT_TEAM: BXQW8UBNM2
-    MARKETING_VERSION: "0.3.0"
+    MARKETING_VERSION: "0.3.1"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -19,6 +19,9 @@ settings:
 packages:
   SynapseKit:
     path: SynapseKit
+  # Alpine Linux on the iPhone (iSH, GPL-3.0); scripts/fetch-ish.sh puts iSHCore.xcframework in Vendor/.
+  LinuxCore:
+    path: Packages/LinuxCore
   # On-device open-weights models (MLX). mlx-swift 0.31.5+ needs Xcode 26.4 (Swift 6.3); CI's macos-15 has 26.3,
   # so these stay on the last releases that build there.
   mlx-swift:
@@ -54,6 +57,7 @@ targets:
           - "**/.DS_Store"
     dependencies:
       - package: SynapseKit
+      - package: LinuxCore
       - package: mlx-swift
         product: MLX
       - package: mlx-swift-lm

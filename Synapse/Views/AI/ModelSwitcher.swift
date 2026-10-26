@@ -92,6 +92,8 @@ struct ModelSwitcherSheet: View {
                     Label("Transcription", systemImage: "waveform")
                 }
 
+                OnDeviceLinuxSection()
+
                 if ai.bridgeSandbox != nil || ai.bridgeHarness != nil {
                     Section {
                         if let sandbox = ai.bridgeSandbox {
@@ -354,6 +356,47 @@ struct ModelCardView: View {
         case .onDevice: return "Runs on this iPhone"
         case .subscription: return "Subscription"
         case .api: return "API"
+        }
+    }
+}
+
+/// Install and see Linux on this iPhone.
+struct OnDeviceLinuxSection: View {
+    @Environment(AIService.self) private var ai
+
+    var body: some View {
+        let linux = ai.linux
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Alpine Linux 3.20 (x86, emulated by iSH)").font(.subheadline.weight(.semibold))
+                Text("bash, python3, git, ripgrep and the apk package manager. Offline and private; slower than the computer's sandbox.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            switch linux.state {
+            case .notInstalled:
+                if linux.isInstalled {
+                    Button { Task { await linux.start() } } label: { Label("Start Linux", systemImage: "play.circle") }
+                } else {
+                    Button { Task { await linux.start() } } label: {
+                        Label("Install Linux · \(ByteCountFormatter.string(fromByteCount: linux.pin.bytes, countStyle: .file))", systemImage: "arrow.down.circle")
+                    }
+                }
+            case .downloading:
+                HStack { ProgressView(); Text("Downloading…").font(.subheadline) }
+            case .importing:
+                HStack { ProgressView(); Text("Unpacking…").font(.subheadline) }
+            case .booting:
+                HStack { ProgressView(); Text("Starting…").font(.subheadline) }
+            case .ready:
+                LabeledContent("Status", value: linux.bootMs.map { "Running · booted in \(Int($0)) ms" } ?? "Running")
+            case .failed(let why):
+                Text(why).font(.caption).foregroundStyle(.orange)
+                Button { Task { await linux.start() } } label: { Label("Try again", systemImage: "arrow.clockwise") }
+            }
+        } header: {
+            Label("Linux on this iPhone", systemImage: "terminal")
+        } footer: {
+            Text("The AI's shell tool uses it when you allow the Linux shell. iSH is GPL-3.0 software, so Synapse is GPL-3.0 too.")
         }
     }
 }

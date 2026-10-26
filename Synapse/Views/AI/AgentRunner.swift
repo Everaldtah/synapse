@@ -21,6 +21,7 @@ final class AgentRunner {
     /// Original files, copied into the sandbox the first time a shell or Claude Code call needs them.
     let files: [URL]
     private var uploaded = false
+    private var sharedWithPhone = false
 
     init(ai: AIService, sources: [NotesSource] = [], files: [URL] = []) {
         self.ai = ai
@@ -29,13 +30,16 @@ final class AgentRunner {
     }
 
     var webAvailable: Bool { ai.agentWeb }
-    var shellAvailable: Bool { ai.agentShell && ai.bridgeSandbox?.available == true && ai.bridgeEndpoint != nil }
+    var pcShell: Bool { ai.agentShell && ai.bridgeSandbox?.available == true && ai.bridgeEndpoint != nil }
+    var phoneShell: Bool { ai.agentShell && ai.linux.isInstalled }
+    var shellAvailable: Bool { pcShell || phoneShell }
     var harnessAvailable: Bool { ai.agentHarness && ai.bridgeHarness?.loggedIn == true && ai.bridgeEndpoint != nil }
 
     func tools(web: Bool = true) -> [AgentToolSpec] {
         var t: [AgentToolSpec] = []
         if web && webAvailable { t += [.webSearch, .fetchURL] }
-        if shellAvailable { t.append(.shell(targets: ["pc"])) }
+        let targets = (phoneShell ? ["iphone"] : []) + (pcShell ? ["pc"] : [])
+        if !targets.isEmpty { t.append(.shell(targets: targets)) }
         if harnessAvailable { t.append(.claudeCode) }
         if !sources.isEmpty { t.append(.readSource) }
         return t
@@ -82,7 +86,14 @@ final class AgentRunner {
         case AgentToolSpec.fetchURL.name:
             return try await WebTools.fetch(call.input, limit: max(limit * 3, 8_000))
         case "shell":
-            guard let bridge = ai.bridgeEndpoint, shellAvailable else { throw AIError(message: "The Linux sandbox isn't available.") }
+            // where="iphone" (or no computer sandbox) runs on the phone; otherwise on the computer.
+            let onPhone = phoneShell && (call.attributes["where"] == "iphone" || !pcShell)
+            if onPhone {
+                if !sharedWithPhone { ai.linux.share(files); sharedWithPhone = true }
+                progress("Linux on this iPhone")
+                return try await ai.linux.run(call.input, timeout: 180)
+            }
+            guard let bridge = ai.bridgeEndpoint, pcShell else { throw AIError(message: "No Linux shell is set up.") }
             try await uploadFiles(bridge)
             return try await bridge.shell(call.input, timeout: 180).summary
         case AgentToolSpec.claudeCode.name:

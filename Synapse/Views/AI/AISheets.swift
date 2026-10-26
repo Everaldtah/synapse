@@ -539,8 +539,12 @@ struct AgentToolsSection: View {
         @Bindable var ai = ai
         Section {
             Toggle(isOn: $ai.agentWeb) { Label("Search and read the web", systemImage: "globe") }
-            if ai.bridgeSandbox?.available == true {
-                Toggle(isOn: $ai.agentShell) { Label("Linux shell on your computer (sandbox)", systemImage: "terminal") }
+            if ai.bridgeSandbox?.available == true || ai.linux.isInstalled {
+                Toggle(isOn: $ai.agentShell) {
+                    Label(ai.linux.isInstalled && ai.bridgeSandbox?.available == true ? "Linux shell (iPhone and computer)"
+                          : ai.linux.isInstalled ? "Linux shell on this iPhone" : "Linux shell on your computer (sandbox)",
+                          systemImage: "terminal")
+                }
             }
             if ai.bridgeHarness?.loggedIn == true {
                 Toggle(isOn: $ai.agentHarness) { Label("Hand hard tasks to Claude Code", systemImage: "sparkles.rectangle.stack") }
@@ -548,8 +552,9 @@ struct AgentToolsSection: View {
         } header: {
             Text("Tools for Ask AI")
         } footer: {
-            Text(ai.bridgeSandbox?.available == true ? "Commands run automatically inside the sandbox on your computer, never on its own files."
-                 : "Pair Synapse Bridge with its Linux sandbox to let AI run code and use Claude Code.")
+            Text(ai.bridgeSandbox?.available == true || ai.linux.isInstalled
+                 ? "Commands run automatically inside a sandbox: Alpine Linux on this iPhone, or the Linux sandbox on your computer — never on your own files."
+                 : "Install Linux on this iPhone (AI models › Linux), or pair Synapse Bridge with its sandbox, to let AI run code.")
         }
     }
 }

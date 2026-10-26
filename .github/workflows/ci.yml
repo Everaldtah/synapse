@@ -47,6 +47,7 @@ jobs:
       - name: Generate the Xcode project
         run: |
           which xcodegen || brew install xcodegen
+          scripts/fetch-ish.sh
           xcodegen generate
       - name: Metal toolchain (MLX compiles its shaders)
         run: xcodebuild -downloadComponent MetalToolchain || echo "Metal toolchain already installed or unavailable"

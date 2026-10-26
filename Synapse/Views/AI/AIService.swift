@@ -209,6 +209,8 @@ final class AIService {
     @ObservationIgnored let apple = AppleFoundationLLM()
     /// Downloadable open-weights models (observable on its own).
     let models = LocalModelManager()
+    /// Alpine Linux on the iPhone, for the agent's shell tool.
+    let linux = OnDeviceLinux()
     @ObservationIgnored private var mlx: [String: MLXLocalLLM] = [:]
 
     init() {

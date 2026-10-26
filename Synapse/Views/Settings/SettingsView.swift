@@ -80,7 +80,7 @@ struct SettingsView: View {
             Section("About") {
                 LabeledContent("Version", value: "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))")
                 Link(destination: URL(string: "https://github.com/Everaldtah/synapse")!) { Label("Source & Synapse Bridge", systemImage: "chevron.left.forwardslash.chevron.right") }
-                Text("Synapse is not made by or affiliated with Anthropic or Notion. Claude and Claude Code are products of Anthropic.")
+                Text("Synapse is free software under the GPL-3.0 (it includes iSH for Linux on the iPhone; source on GitHub). Not made by or affiliated with Anthropic or Notion. Claude and Claude Code are products of Anthropic.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }

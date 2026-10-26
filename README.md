@@ -102,4 +102,4 @@ builds go to the internal group **Synapse testers**. `tools/asc/asc.py` is a sma
 
 ## License
 
-MIT. Synapse isn't affiliated with Anthropic or Notion. Claude and Claude Code are trademarks of Anthropic.
+GPL-3.0 (since v0.3.1, because Linux on the iPhone uses iSH, which is GPL-3.0; earlier versions were MIT). Synapse isn't affiliated with Anthropic or Notion. Claude and Claude Code are trademarks of Anthropic.
