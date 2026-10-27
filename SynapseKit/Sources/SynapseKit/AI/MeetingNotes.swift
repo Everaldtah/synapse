@@ -386,8 +386,26 @@ public enum MeetingNotes {
         return rounds
     }
 
+    /// Clean a speech transcript part by part with any model. A part whose reply lost more than half the text (the
+    /// model summarised instead of cleaning) keeps its original wording.
+    public static func cleanTranscript(_ transcript: String, title: String, budget: Int,
+                                       complete: (AIRequest) async throws -> String,
+                                       progress: (Step) -> Void = { _ in },
+                                       isolation: isolated (any Actor)? = #isolation) async throws -> String {
+        let parts = chunks(transcript, maxCharacters: budget)
+        var cleaned: [String] = []
+        for (i, part) in parts.enumerated() {
+            try Task.checkCancellation()
+            progress(Step(done: i, total: parts.count, label: parts.count > 1 ? "Cleaning up part \(i + 1) of \(parts.count)" : "Cleaning up the transcript"))
+            let reply = clean(try await complete(cleanupRequest(part, part: i + 1, of: parts.count, title: title)))
+            cleaned.append(reply.count * 2 < part.count ? part : reply)
+        }
+        progress(Step(done: parts.count, total: parts.count, label: "Done"))
+        return cleaned.joined(separator: "\n\n")
+    }
+
     /// Strip a stray code fence or preamble line.
-    static func clean(_ text: String) -> String {
+    public static func clean(_ text: String) -> String {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.hasPrefix("```") {
             t = t.components(separatedBy: "\n").dropFirst().joined(separator: "\n")

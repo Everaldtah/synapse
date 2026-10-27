@@ -163,6 +163,22 @@ final class MeetingNotesTests: XCTestCase {
         XCTAssertTrue(MeetingNotes.cleanupRequest("x", part: 2, of: 3, title: "T").messages[0].content.contains("of \"T\" (part 2 of 3). Fix"))
     }
 
+    func testCleanTranscriptKeepsPartsTheModelSummarised() async throws {
+        let paragraph = String(repeating: "so we we agreed um to ship on friday and sam writes the notes ", count: 12)
+        let transcript = [paragraph, paragraph, paragraph].joined(separator: "\n")
+        var calls = 0
+        let out = try await MeetingNotes.cleanTranscript(transcript, title: "Sync", budget: paragraph.count + 10) { req in
+            calls += 1
+            // Part 2 comes back summarised: far shorter than what it was given.
+            return calls == 2 ? "Shipping Friday." : "```\n" + String(repeating: "So we agreed to ship on Friday, and Sam writes the notes. ", count: 12) + "\n```"
+        }
+        XCTAssertEqual(calls, 3)
+        let parts = out.components(separatedBy: "\n\n")
+        XCTAssertEqual(parts.count, 3)
+        XCTAssertTrue(parts[0].hasPrefix("So we agreed"), "fences stripped")
+        XCTAssertTrue(parts[1].hasPrefix("so we we agreed"), "a summarised part keeps the original")
+    }
+
     func testMeetingBlocks() {
         let blocks = MeetingNotes.blocks(notes: "## Summary\nShort.\n\n## Action items\n- [ ] Send deck", transcript: "Hello all.\nSee #42 and [[x]].",
                                          audio: "asset:a.m4a")
