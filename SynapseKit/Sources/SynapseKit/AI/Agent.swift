@@ -92,11 +92,14 @@ public enum Agent {
         let form = callsPerReply > 1
             ? "To use tools, reply with ONLY tool calls in exactly the form shown (up to \(callsPerReply) in one reply; they run in order), and nothing else."
             : "To use a tool, reply with ONLY one tool call in exactly the form shown, and nothing else."
+        let syntax = compact
+            ? "\nCall syntax: <tool name=\"read_page\">Weekly review</tool>; with attributes: <tool name=\"create_page\" title=\"Ideas\" parent=\"Projects\">Markdown</tool>; no input: <tool name=\"list_pages\"/>\n"
+            : ""
         return """
         TOOLS
         You can use these tools:
         \(list)
-
+        \(syntax)
         \(form) Write each call as plain text in exactly that XML form — not as a function call, JSON or any other \
         syntax. You'll get the output back as <result>…</result>. Use at most \(maxCalls) tool calls, and only when they help. When you have what you \
         need, write your final answer normally, with no <tool> tags. When you used web pages, cite them as Markdown links.
@@ -129,7 +132,7 @@ public enum Agent {
         let reply = reply.range(of: "<tool") == nil ? (NativeToolCalls.fromHarmony(reply) ?? reply) : reply
         var calls: [AgentToolCall] = []
         var from = reply.startIndex
-        while let open = reply.range(of: "<tool\\s+[^>]*>", options: .regularExpression, range: from..<reply.endIndex) {
+        while let open = reply.range(of: "<tool(?:\\s+[^>]*)?>", options: .regularExpression, range: from..<reply.endIndex) {
             let tag = String(reply[open])
             var attributes: [String: String] = [:]
             if let re = attributePattern {
@@ -142,7 +145,7 @@ public enum Agent {
             let rest = reply[open.upperBound...]
             var input = ""
             let close = rest.range(of: "</tool>")
-            let next = rest.range(of: "<tool\\s+[^>]*>", options: .regularExpression)
+            let next = rest.range(of: "<tool(?:\\s+[^>]*)?>", options: .regularExpression)
             if tag.hasSuffix("/>") {
                 from = open.upperBound
             } else if let close, next.map({ close.lowerBound < $0.lowerBound }) ?? true {
@@ -156,8 +159,15 @@ public enum Agent {
                 input = String(rest)
                 from = reply.endIndex
             }
-            guard let name = attributes.removeValue(forKey: "name") else { continue }
+            var name = attributes.removeValue(forKey: "name") ?? ""
             input = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.isEmpty {
+                // Small models sometimes write <tool>graph_overview</tool> or <tool>read_page Home</tool>.
+                let parts = input.split(maxSplits: 1, whereSeparator: { $0 == " " || $0.isNewline })
+                guard let first = parts.first, first.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { continue }
+                name = String(first)
+                input = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            }
             if input.hasPrefix("```") {
                 input = input.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
                 if input.hasSuffix("```") { input = String(input.dropLast(3)) }
@@ -181,7 +191,7 @@ public enum Agent {
         if let final = reply.range(of: "<|channel|>final<|message|>") { reply = String(reply[final.upperBound...]) }
         reply = reply.replacingOccurrences(of: "<\\|[a-z_]+\\|>", with: "", options: .regularExpression)
         return reply.replacingOccurrences(of: "<tool\\s+[^>]*/>", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "(?s)<tool\\s+[^>]*>.*?(</tool>|$)", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "(?s)<tool(?:\\s+[^>]*)?>.*?(</tool>|$)", with: "", options: .regularExpression)
             .replacingOccurrences(of: "(?s)<result[^>]*>.*?</result>", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

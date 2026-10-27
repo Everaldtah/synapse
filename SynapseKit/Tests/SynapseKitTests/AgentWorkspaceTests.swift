@@ -26,6 +26,13 @@ final class AgentLoopTests: XCTestCase {
         // Junk closing tags from a model's own function format are dropped.
         XCTAssertEqual(Agent.parseCall("<tool name=\"web_search\">tag:biology\n</rfl:parameter>tool>\n</parameter></tool>", known: known)?.input, "tag:biology")
         XCTAssertEqual(Agent.parseCall("<tool name=\"web_search\">a\n</div></tool>", known: known)?.input, "a\n</div>")
+        // Name-only form small models fall back to.
+        XCTAssertEqual(Agent.parseCalls("<tool>list_pages</tool>", known: known, inputOptional: ["list_pages"]),
+                       [AgentToolCall(name: "list_pages", input: "")])
+        XCTAssertEqual(Agent.parseCall("<tool>\ncreate_page\n# Hi\n</tool>", known: known), AgentToolCall(name: "create_page", input: "# Hi"))
+        XCTAssertEqual(Agent.cleanAnswer("Done <tool>list_pages</tool>"), "Done")
+        XCTAssertTrue(Agent.instructions(tools: tools, maxCalls: 3, compact: true).contains("Call syntax: <tool name=\"read_page\">"))
+        XCTAssertFalse(Agent.instructions(tools: tools, maxCalls: 3).contains("Call syntax"))
         // A missing closing tag ends at the next call.
         let open = Agent.parseCalls("<tool name=\"web_search\">a\n<tool name=\"web_search\">b</tool>", known: known)
         XCTAssertEqual(open.map(\.input), ["a", "b"])
