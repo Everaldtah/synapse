@@ -49,6 +49,7 @@ struct MakeNotesSheet: View {
     @AppStorage("notes.style") private var styleRaw = NoteStyle.meeting.rawValue
     @AppStorage("notes.onComputer") private var transcribeOnComputer = false
     @AppStorage("notes.checkWeb") private var checkWeb = true
+    @AppStorage("notes.cleanTranscripts") private var cleanTranscripts = false
     @State private var keepAudio = true
     @State private var sources: [SourceItem] = []
     @State private var choice: ModelChoice = .auto
@@ -248,6 +249,9 @@ struct MakeNotesSheet: View {
                 Picker(selection: $locale) {
                     ForEach(locales, id: \.identifier) { Text(Transcriber.name(of: $0)).tag($0) }
                 } label: { Label("Speech language", systemImage: "globe") }
+            }
+            if sources.contains(where: { $0.kind == .recording || $0.kind == .audio }) {
+                Toggle(isOn: $cleanTranscripts) { Label("Clean up transcripts first (slower)", systemImage: "text.badge.checkmark") }
             }
             if ai.agentWeb {
                 Toggle(isOn: $checkWeb) { Label("Check facts on the web and add references", systemImage: "checkmark.seal") }
@@ -482,8 +486,31 @@ struct MakeNotesSheet: View {
         answer = nil
         progressLabel = "Writing notes…"
         progressValue = nil
+        let speech = cleanTranscripts ? used.filter { $0.kind == .recording || $0.kind == .audio } : []
         task = Task { @MainActor in
             var budget = min(ai.budget(for: concrete).prompt - 1_200, 150_000)
+            var material = material
+            // Clean transcripts first (mis-hearings, punctuation, paragraphs); the clean text is what the page keeps.
+            for item in speech {
+                do {
+                    // Parts of at most 4,000 characters: the cleaned part (about as long) always fits one reply.
+                    let cleaned = try await MeetingNotes.cleanTranscript(item.text, title: name, budget: max(1_000, min(4_000, ai.budget(for: concrete).rewrite - 600)),
+                                                                         complete: { req in try await ai.complete(req, choice: concrete, fallback: use == .auto) },
+                                                                         progress: { step in
+                        progressLabel = "\(item.name): \(step.label)"
+                        progressValue = step.total > 0 ? Double(step.done) / Double(step.total) : nil
+                    })
+                    update(item.id) { $0.text = cleaned }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self.error = error.localizedDescription
+                    phase = .collect
+                    return
+                }
+            }
+            if !speech.isEmpty { material = MeetingNotes.material(ready.map(\.source)) }
+            progressLabel = "Writing notes…"
             for attempt in 0..<2 {
                 do {
                     var info: AIAnswerInfo?

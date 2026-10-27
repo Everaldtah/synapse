@@ -178,7 +178,41 @@ public enum ModelCatalog {
 
     /// Open-weights models Synapse downloads from Hugging Face (mlx-community 4-bit builds) and runs with MLX on the GPU.
     /// Sizes are the weight files; parameters and context windows are the model makers' figures.
-    public static let downloadable: [ModelCard] = [
+    public static let downloadable: [ModelCard] = [synapseAlpha] + openModels
+
+    /// Synapse's own model: Qwen3.5-2B fine-tuned on Synapse's prompts, tools and note formats. Its hybrid attention keeps
+    /// the memory cache small (6 of 24 layers attend over the whole window), so it runs with twice the context of the
+    /// others. 16,000 tokens keeps the prompt budget under the Agents tab's 40,000-character line for small models.
+    public static let synapseAlpha = ModelCard(
+        id: "mlx.synapse-alpha-1.0",
+        name: "Synapse Alpha 1.0",
+        maker: "Synapse (fine-tuned from Alibaba's Qwen3.5-2B)",
+        kind: .onDevice,
+        parameters: "2 billion parameters",
+        quantization: "4-bit",
+        size: "1.1 GB download",
+        downloadBytes: 1_079_466_994,
+        contextWindow: "262K tokens (16K on iPhone)",
+        maxOutput: "4,096 tokens a reply",
+        summary: "Made for Synapse: transcripts, notes, research and agents on this iPhone",
+        goodAt: [
+            "Meeting, lecture and summary notes from recordings, documents and photos, in Synapse's formats",
+            "Cleaning up speech-recognition transcripts: mis-heard names and words, punctuation, paragraphs",
+            "Editor actions, Ask with [[page]] citations, and link suggestions for the graph",
+            "Using Synapse's tools: web search and pages, the terminal, and the Agents tab's pages, graph and files",
+        ],
+        limits: [
+            "Alpha: trained on generated Synapse data, so check important facts",
+            "Still a small model: use a cloud model for hard reasoning, long code or deep research",
+            "Speech is turned into text by Apple's transcriber or Whisper; this model works on that text",
+        ],
+        requirements: downloadRequirements,
+        repoID: "evraldtah/Synapse-Alpha-1.0-4bit",
+        stopTokens: ["<|im_end|>"],
+        runContextTokens: 16_000
+    )
+
+    static let openModels: [ModelCard] = [
         ModelCard(
             id: "mlx.qwen3-4b-instruct-2507",
             name: "Qwen3 4B Instruct",
@@ -189,7 +223,7 @@ public enum ModelCatalog {
             size: "2.3 GB download",
             downloadBytes: 2_277_297_844,
             contextWindow: "262K tokens (8K on iPhone)",
-            maxOutput: "1,500 tokens a reply",
+            maxOutput: "About 2,700 tokens a reply",
             summary: "Best all-round local model: twice the context of Apple's, stronger reasoning",
             goodAt: [
                 "Meeting notes, summaries and action items from longer text in one pass",
@@ -217,7 +251,7 @@ public enum ModelCatalog {
             size: "1.8 GB download",
             downloadBytes: 1_824_807_894,
             contextWindow: "128K tokens (8K on iPhone)",
-            maxOutput: "1,500 tokens a reply",
+            maxOutput: "About 2,700 tokens a reply",
             summary: "Steady summariser and rewriter",
             goodAt: [
                 "Summaries, rewrites and tone changes",
@@ -243,7 +277,7 @@ public enum ModelCatalog {
             size: "2.2 GB download",
             downloadBytes: 2_177_574_851,
             contextWindow: "128K tokens (8K on iPhone)",
-            maxOutput: "1,500 tokens a reply",
+            maxOutput: "About 2,700 tokens a reply",
             summary: "Strongest small reasoner: maths, logic, structured answers",
             goodAt: [
                 "Reasoning-heavy questions, maths and step-by-step answers",
@@ -270,7 +304,7 @@ public enum ModelCatalog {
             size: "1.0 GB download",
             downloadBytes: 982_341_391,
             contextWindow: "32K tokens (8K on iPhone)",
-            maxOutput: "1,500 tokens a reply",
+            maxOutput: "About 2,700 tokens a reply",
             summary: "Small and fast, with a bigger window than Apple's model",
             goodAt: [
                 "Quick summaries and rewrites of longer text",

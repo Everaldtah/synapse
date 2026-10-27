@@ -212,6 +212,23 @@ public enum MeetingNotes {
         return AIRequest(system: system, messages: [AIMessage(role: .user, content: user)])
     }
 
+    /// A clean transcript from raw speech recognition: mis-hearings fixed from context, punctuation, paragraphs, fillers
+    /// dropped, nothing summarised. Long transcripts go in parts (the reply is about as long as the part).
+    public static func cleanupRequest(_ chunk: String, part: Int = 1, of count: Int = 1, title: String) -> AIRequest {
+        let which = count > 1 ? " (part \(part) of \(count))" : ""
+        let user = """
+        Clean up this speech-recognition transcript of "\(AIPrompts.escape(title))"\(which). Fix words that were clearly \
+        misheard, using the context; fix punctuation and capitalisation; drop filler words (um, uh), false starts and \
+        accidental repeats; start a new paragraph when the speaker or the topic changes. Keep everything that was said, \
+        in the original wording and language: don't summarise, add or reorder anything. Reply with only the transcript.
+
+        <transcript>
+        \(chunk)
+        </transcript>
+        """
+        return AIRequest(system: system, messages: [AIMessage(role: .user, content: user)])
+    }
+
     /// Split text into chunks of at most `maxCharacters`, breaking between paragraphs, then sentences, then words.
     public static func chunks(_ text: String, maxCharacters: Int) -> [String] {
         let limit = max(200, maxCharacters)
@@ -369,8 +386,26 @@ public enum MeetingNotes {
         return rounds
     }
 
+    /// Clean a speech transcript part by part with any model. A part whose reply lost more than half the text (the
+    /// model summarised instead of cleaning) keeps its original wording.
+    public static func cleanTranscript(_ transcript: String, title: String, budget: Int,
+                                       complete: (AIRequest) async throws -> String,
+                                       progress: (Step) -> Void = { _ in },
+                                       isolation: isolated (any Actor)? = #isolation) async throws -> String {
+        let parts = chunks(transcript, maxCharacters: budget)
+        var cleaned: [String] = []
+        for (i, part) in parts.enumerated() {
+            try Task.checkCancellation()
+            progress(Step(done: i, total: parts.count, label: parts.count > 1 ? "Cleaning up part \(i + 1) of \(parts.count)" : "Cleaning up the transcript"))
+            let reply = clean(try await complete(cleanupRequest(part, part: i + 1, of: parts.count, title: title)))
+            cleaned.append(reply.count * 2 < part.count ? part : reply)
+        }
+        progress(Step(done: parts.count, total: parts.count, label: "Done"))
+        return cleaned.joined(separator: "\n\n")
+    }
+
     /// Strip a stray code fence or preamble line.
-    static func clean(_ text: String) -> String {
+    public static func clean(_ text: String) -> String {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.hasPrefix("```") {
             t = t.components(separatedBy: "\n").dropFirst().joined(separator: "\n")

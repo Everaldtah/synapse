@@ -82,11 +82,16 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertNotNil(AIRouter.complexity(of: .translate, inputCharacters: 100, language: "Japanese", budget: ModelCatalog.budget(for: llama)))
         for card in ModelCatalog.downloadable {
             XCTAssertTrue(ModelCatalog.isDownloadable(card))
-            XCTAssertTrue(card.repoID.hasPrefix("mlx-community/"))
+            XCTAssertTrue(card.repoID.hasPrefix("mlx-community/") || card.id == ModelCatalog.synapseAlpha.id)
             XCTAssertFalse(card.stopTokens.isEmpty)
             XCTAssertLessThan(card.downloadBytes, 2_500_000_000, "keep weights under ~2.5 GB for the ~6 GB app limit")
         }
         XCTAssertFalse(ModelCatalog.isDownloadable(ModelCatalog.appleFoundation))
+        // Synapse Alpha runs at 16,000 tokens: more room than the 8K models, still the small-agent settings.
+        let alpha = ModelCatalog.budget(for: ModelCatalog.synapseAlpha)
+        XCTAssertGreaterThan(alpha.prompt, b.prompt)
+        XCTAssertLessThanOrEqual(alpha.prompt, 40_000)
+        XCTAssertEqual(ModelCatalog.downloadable.first?.id, ModelCatalog.synapseAlpha.id)
     }
 
     func testThinkTagFilter() {
@@ -152,6 +157,31 @@ final class MeetingNotesTests: XCTestCase {
         XCTAssertEqual(finals, 1)
         XCTAssertEqual(notes, "## Summary\nAll merged.")
         XCTAssertEqual(steps.last?.label, "Done")
+    }
+
+    func testCleanupRequest() {
+        let one = MeetingNotes.cleanupRequest("so um we we ship on friday", title: "Stand-up \"Mon\"")
+        let text = one.messages[0].content
+        XCTAssertTrue(text.hasPrefix("Clean up this speech-recognition transcript of \"Stand-up 'Mon'\". Fix words"))
+        XCTAssertTrue(text.hasSuffix("<transcript>\nso um we we ship on friday\n</transcript>"))
+        XCTAssertEqual(one.system, MeetingNotes.system)
+        XCTAssertTrue(MeetingNotes.cleanupRequest("x", part: 2, of: 3, title: "T").messages[0].content.contains("of \"T\" (part 2 of 3). Fix"))
+    }
+
+    func testCleanTranscriptKeepsPartsTheModelSummarised() async throws {
+        let paragraph = String(repeating: "so we we agreed um to ship on friday and sam writes the notes ", count: 12)
+        let transcript = [paragraph, paragraph, paragraph].joined(separator: "\n")
+        var calls = 0
+        let out = try await MeetingNotes.cleanTranscript(transcript, title: "Sync", budget: paragraph.count + 10) { req in
+            calls += 1
+            // Part 2 comes back summarised: far shorter than what it was given.
+            return calls == 2 ? "Shipping Friday." : "```\n" + String(repeating: "So we agreed to ship on Friday, and Sam writes the notes. ", count: 12) + "\n```"
+        }
+        XCTAssertEqual(calls, 3)
+        let parts = out.components(separatedBy: "\n\n")
+        XCTAssertEqual(parts.count, 3)
+        XCTAssertTrue(parts[0].hasPrefix("So we agreed"), "fences stripped")
+        XCTAssertTrue(parts[1].hasPrefix("so we we agreed"), "a summarised part keeps the original")
     }
 
     func testMeetingBlocks() {
