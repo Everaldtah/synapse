@@ -229,7 +229,7 @@ final class APIProviderStore {
             if lastUsed?.provider != id || lastUsed?.model != model { lastUsed = (id, model) }
             // Offer the agent's tools as native functions to models known to call them (gpt-oss follows that far
             // better than a text protocol); their calls come back as <tool> text either way.
-            if !tools.isEmpty, models(for: id).first(where: { $0.id == model })?.tools == true {
+            if !tools.isEmpty, models(for: id).first(where: { $0.id == model })?.tools == true || model.lowercased().contains("gpt-oss") {
                 client.tools = try? JSONSerialization.data(withJSONObject: NativeToolCalls.schemas(for: tools))
             }
             return client.stream(request, images: images)

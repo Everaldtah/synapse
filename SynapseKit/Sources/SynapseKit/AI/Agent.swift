@@ -122,6 +122,8 @@ public enum Agent {
     /// `key="…"` (may contain apostrophes) or `key='…'` (may contain double quotes).
     private static let attributePattern = try? NSRegularExpression(pattern: "(\\w+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')")
 
+    private static let junkTag = "^</(?:[a-z]+:)?(?:parameter|function|invoke|tool_call|tool|arg|args|arguments)>(?:tool>|function>)?$"
+
     private static func rawCalls(_ reply: String) -> [AgentToolCall] {
         // Models that slip into their own function-calling syntax (gpt-oss "harmony") get it translated.
         let reply = reply.range(of: "<tool") == nil ? (NativeToolCalls.fromHarmony(reply) ?? reply) : reply
@@ -161,6 +163,12 @@ public enum Agent {
                 if input.hasSuffix("```") { input = String(input.dropLast(3)) }
                 input = input.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            // Stray closing tags some models leave after an argument ("</parameter>", "</rfl:parameter>tool>").
+            var lines = input.components(separatedBy: "\n")
+            while let last = lines.last?.trimmingCharacters(in: .whitespaces), last.range(of: junkTag, options: .regularExpression) != nil {
+                lines.removeLast()
+            }
+            input = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             calls.append(AgentToolCall(name: name, input: input, attributes: attributes))
         }
         return calls
@@ -223,6 +231,7 @@ public enum Agent {
         let optional = Set(tools.filter(\.inputOptional).map(\.name))
         var messages = request.messages
         var calls = 0
+        var nudged = false
         while true {
             try Task.checkCancellation()
             let reply = try await complete(AIRequest(system: system, messages: compact(messages, limit: contextLimit)))
@@ -236,6 +245,13 @@ public enum Agent {
                 Error: there is no tool called \(missing). The tools are: \(tools.map(\.name).joined(separator: ", ")).
                 </result>
                 """))
+                continue
+            }
+            if parsed.isEmpty && cleanAnswer(reply).isEmpty && !nudged {
+                // Some models "decide" to use a tool in hidden reasoning and send nothing; ask once more.
+                nudged = true
+                messages.append(AIMessage(role: .assistant, content: "(no reply)"))
+                messages.append(AIMessage(role: .user, content: "Your reply was empty. Write the tool call itself as text in the <tool name=\"…\">…</tool> form, or write your answer."))
                 continue
             }
             guard !parsed.isEmpty else {

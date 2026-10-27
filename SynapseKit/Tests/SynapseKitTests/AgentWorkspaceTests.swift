@@ -23,6 +23,9 @@ final class AgentLoopTests: XCTestCase {
         XCTAssertEqual(Agent.parseCall(reply, known: known)?.name, "create_page")
         XCTAssertEqual(Agent.unknownCalls("<tool name=\"rm_rf\">/</tool>", known: known), ["rm_rf"])
         XCTAssertEqual(Agent.cleanAnswer("Done.<tool name=\"list_pages\"/>"), "Done.")
+        // Junk closing tags from a model's own function format are dropped.
+        XCTAssertEqual(Agent.parseCall("<tool name=\"web_search\">tag:biology\n</rfl:parameter>tool>\n</parameter></tool>", known: known)?.input, "tag:biology")
+        XCTAssertEqual(Agent.parseCall("<tool name=\"web_search\">a\n</div></tool>", known: known)?.input, "a\n</div>")
         // A missing closing tag ends at the next call.
         let open = Agent.parseCalls("<tool name=\"web_search\">a\n<tool name=\"web_search\">b</tool>", known: known)
         XCTAssertEqual(open.map(\.input), ["a", "b"])
@@ -50,6 +53,19 @@ final class AgentLoopTests: XCTestCase {
         XCTAssertTrue(seen[2].messages.last!.content.contains("<result tool=\"web_search\">"))
         XCTAssertTrue(seen[0].system.contains("up to 4 in one reply"))
         XCTAssertTrue(notes.isEmpty)
+    }
+
+    func testEmptyReplyIsNudgedOnce() async throws {
+        var replies = ["", "<tool name=\"list_pages\"/>", "", "Done."]
+        var count = 0
+        let answer = try await Agent.run(AIRequest(system: "S", messages: [AIMessage(role: .user, content: "Go")]), tools: tools,
+                                         maxCalls: 3, resultLimit: 500, complete: { req in
+            count += 1
+            if count == 2 { XCTAssertTrue(req.messages.last!.content.contains("reply was empty")) }
+            return replies.removeFirst()
+        }, execute: { _ in "pages" })
+        XCTAssertEqual(answer, "", "a second empty reply is the answer (no endless nudging)")
+        XCTAssertEqual(count, 3)
     }
 
     func testCompactShortensOldResults() {
