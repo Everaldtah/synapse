@@ -49,6 +49,42 @@ final class APIProviderTests: XCTestCase {
         XCTAssertEqual(OpenAICompat.text(fromResponse: Data(#"{"choices":[{"message":{"content":"ok"}}]}"#.utf8)), "ok")
     }
 
+    func testNativeToolCalls() {
+        XCTAssertEqual(NativeToolCalls.markup(name: "create_page", arguments: ##"{"title":"Bob's \"notes\"","markdown":"# Hi","depth":2,"show":true}"##),
+                       ##"<tool name="create_page" depth="2" show="true" title="Bob's 'notes'"># Hi</tool>"##)
+        XCTAssertEqual(NativeToolCalls.markup(name: "functions.web_search", arguments: #"{"q":"krebs"}"#), #"<tool name="web_search">krebs</tool>"#)
+        XCTAssertEqual(NativeToolCalls.markup(name: "list_pages", arguments: "{}"), #"<tool name="list_pages"></tool>"#)
+
+        // Streamed deltas: the name once, the arguments in pieces.
+        var acc = NativeToolCalls.Accumulator()
+        for line in [#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read_page","arguments":"{\"in"}}]}}]}"#,
+                     #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"put\":\"Home\"}"}}]}}]}"#] {
+            acc.add(OpenAICompat.chunk(line: line)?.toolCalls ?? [])
+        }
+        XCTAssertEqual(acc.markup, #"<tool name="read_page">Home</tool>"#)
+        let whole = #"{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"list_pages","arguments":"{}"}}]}}]}"#
+        XCTAssertEqual(OpenAICompat.text(fromResponse: Data(whole.utf8)), #"<tool name="list_pages"></tool>"#)
+
+        // gpt-oss harmony text.
+        let harmony = """
+        <|start|>assistant<|channel|>commentary to=tool{
+        "name": "create_page",
+        "title": "Photosynthesis",
+        "icon": "🌿"
+        }---
+        # Photosynthesis
+        Links [[Calvin cycle]].
+        <|call|>
+        """
+        let calls = Agent.parseCalls(harmony, known: ["create_page"])
+        XCTAssertEqual(calls.first?.name, "create_page")
+        XCTAssertEqual(calls.first?.attributes["title"], "Photosynthesis")
+        XCTAssertEqual(calls.first?.input, "# Photosynthesis\nLinks [[Calvin cycle]].")
+        let fn = #"<|channel|>commentary to=functions.web_search <|constrain|>json<|message|>{"query":"tides"}<|call|>"#
+        XCTAssertEqual(Agent.parseCalls(fn, known: ["web_search"]).first?.input, "tides")
+        XCTAssertEqual(Agent.cleanAnswer("<|channel|>analysis<|message|>thinking<|end|><|start|>assistant<|channel|>final<|message|>The answer."), "The answer.")
+    }
+
     func testModelsList() {
         let json = #"{"data":[{"id":"b-model:free","context_length":8192},{"id":"a-model"},{"id":"text-embedding-3"},{"id":"c:free"},{"id":"whisper-large-v3"}]}"#
         XCTAssertEqual(OpenAICompat.models(from: Data(json.utf8)).map(\.id), ["a-model", "b-model:free", "c:free"])

@@ -97,8 +97,8 @@ public enum Agent {
         You can use these tools:
         \(list)
 
-        \(form) You'll get the output \
-        back as <result>…</result>. Use at most \(maxCalls) tool calls, and only when they help. When you have what you \
+        \(form) Write each call as plain text in exactly that XML form — not as a function call, JSON or any other \
+        syntax. You'll get the output back as <result>…</result>. Use at most \(maxCalls) tool calls, and only when they help. When you have what you \
         need, write your final answer normally, with no <tool> tags. When you used web pages, cite them as Markdown links.
         """
     }
@@ -123,6 +123,8 @@ public enum Agent {
     private static let attributePattern = try? NSRegularExpression(pattern: "(\\w+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')")
 
     private static func rawCalls(_ reply: String) -> [AgentToolCall] {
+        // Models that slip into their own function-calling syntax (gpt-oss "harmony") get it translated.
+        let reply = reply.range(of: "<tool") == nil ? (NativeToolCalls.fromHarmony(reply) ?? reply) : reply
         var calls: [AgentToolCall] = []
         var from = reply.startIndex
         while let open = reply.range(of: "<tool\\s+[^>]*>", options: .regularExpression, range: from..<reply.endIndex) {
@@ -166,7 +168,11 @@ public enum Agent {
 
     /// Remove any stray tool markup from a final answer.
     public static func cleanAnswer(_ reply: String) -> String {
-        reply.replacingOccurrences(of: "<tool\\s+[^>]*/>", with: "", options: .regularExpression)
+        var reply = reply
+        // Harmony leftovers: keep only the final channel's message.
+        if let final = reply.range(of: "<|channel|>final<|message|>") { reply = String(reply[final.upperBound...]) }
+        reply = reply.replacingOccurrences(of: "<\\|[a-z_]+\\|>", with: "", options: .regularExpression)
+        return reply.replacingOccurrences(of: "<tool\\s+[^>]*/>", with: "", options: .regularExpression)
             .replacingOccurrences(of: "(?s)<tool\\s+[^>]*>.*?(</tool>|$)", with: "", options: .regularExpression)
             .replacingOccurrences(of: "(?s)<result[^>]*>.*?</result>", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)

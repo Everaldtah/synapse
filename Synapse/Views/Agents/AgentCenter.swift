@@ -340,7 +340,8 @@ final class AgentCenter {
             let stream: AsyncThrowingStream<String, Error>
             if case .api(let p, let m) = choice {
                 // Images go with the first request of the run (each request is sent whole).
-                stream = APIProviderStore.shared.stream(req, provider: p, model: m, images: req.messages.count == firstCount ? images : [])
+                stream = APIProviderStore.shared.stream(req, provider: p, model: m, images: req.messages.count == firstCount ? images : [],
+                                                        tools: tools)
             } else {
                 stream = ai.stream(req, choice: choice, fallback: false)
             }

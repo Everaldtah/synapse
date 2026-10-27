@@ -220,12 +220,18 @@ final class APIProviderStore {
     }
 
     /// Stream a reply from a provider's model. Fails with an `AIError` when the provider isn't ready.
-    func stream(_ request: AIRequest, provider id: String, model: String, images: [String] = []) -> AsyncThrowingStream<String, Error> {
+    func stream(_ request: AIRequest, provider id: String, model: String, images: [String] = [],
+                tools: [AgentToolSpec] = []) -> AsyncThrowingStream<String, Error> {
         switch makeClient(id, model: model) {
         case .failure(let error):
             return AsyncThrowingStream { $0.finish(throwing: error) }
-        case .success(let client):
+        case .success(var client):
             if lastUsed?.provider != id || lastUsed?.model != model { lastUsed = (id, model) }
+            // Offer the agent's tools as native functions to models known to call them (gpt-oss follows that far
+            // better than a text protocol); their calls come back as <tool> text either way.
+            if !tools.isEmpty, models(for: id).first(where: { $0.id == model })?.tools == true {
+                client.tools = try? JSONSerialization.data(withJSONObject: NativeToolCalls.schemas(for: tools))
+            }
             return client.stream(request, images: images)
         }
     }

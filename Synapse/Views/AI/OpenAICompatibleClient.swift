@@ -15,6 +15,8 @@ struct OpenAICompatibleClient {
     var extraHeaders: [String: String] = [:]
     /// Leave nil unless needed: some reasoning models reject `max_tokens`.
     var maxTokens: Int? = nil
+    /// Function definitions (JSON) to offer natively; calls come back as `<tool>` text.
+    var tools: Data? = nil
 
     /// Stream the reply's text. `images` are base64 JPEGs for the last user message.
     func stream(_ request: AIRequest, images: [String] = []) -> AsyncThrowingStream<String, Error> {
@@ -28,7 +30,7 @@ struct OpenAICompatibleClient {
                     req.httpMethod = "POST"
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    let body = OpenAICompat.body(request, model: model, stream: true, maxTokens: maxTokens, images: images)
+                    let body = OpenAICompat.body(request, model: model, stream: true, maxTokens: maxTokens, images: images, tools: tools)
                     req.httpBody = try JSONSerialization.data(withJSONObject: body)
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
                     let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
@@ -36,6 +38,7 @@ struct OpenAICompatibleClient {
                         throw AIError(message: OpenAICompat.errorMessage(code: code, body: try await Self.head(bytes), provider: providerName))
                     }
                     var filter = ThinkTagFilter()
+                    var calls = NativeToolCalls.Accumulator()
                     var sawChunk = false
                     var cutOff = false
                     // A server that ignores `stream: true` answers with one plain JSON body instead.
@@ -55,6 +58,7 @@ struct OpenAICompatibleClient {
                             if !shown.isEmpty { continuation.yield(shown) }
                         }
                         if chunk.finishReason == "length" { cutOff = true }
+                        calls.add(chunk.toolCalls)
                     }
                     if !sawChunk, !plain.isEmpty {
                         let data = Data(plain.utf8)
@@ -68,6 +72,8 @@ struct OpenAICompatibleClient {
                     }
                     let rest = filter.finish()
                     if !rest.isEmpty { continuation.yield(rest) }
+                    // Native function calls become Synapse's <tool> text, so the agent loop can run them.
+                    if !calls.isEmpty { continuation.yield("\n" + calls.markup) }
                     if cutOff { continuation.yield("\n\n_(Reply cut off at the length limit.)_") }
                     continuation.finish()
                 } catch let error as URLError where error.code != .cancelled {

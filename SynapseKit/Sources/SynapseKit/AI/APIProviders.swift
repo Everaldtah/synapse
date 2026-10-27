@@ -286,8 +286,10 @@ public enum OpenAICompat {
         return s
     }
 
-    /// The JSON body for a chat request. `images` are base64 JPEGs added to the last user message.
-    public static func body(_ request: AIRequest, model: String, stream: Bool = true, maxTokens: Int? = nil, images: [String] = []) -> [String: Any] {
+    /// The JSON body for a chat request. `images` are base64 JPEGs added to the last user message; `tools` is a JSON
+    /// array of function definitions (`NativeToolCalls.schemas`) for models that call functions natively.
+    public static func body(_ request: AIRequest, model: String, stream: Bool = true, maxTokens: Int? = nil, images: [String] = [],
+                            tools: Data? = nil) -> [String: Any] {
         var messages: [[String: Any]] = []
         if !request.system.isEmpty { messages.append(["role": "system", "content": request.system]) }
         let lastUser = request.messages.lastIndex { $0.role == .user }
@@ -302,6 +304,10 @@ public enum OpenAICompat {
         }
         var body: [String: Any] = ["model": model, "messages": messages, "stream": stream]
         if let maxTokens { body["max_tokens"] = maxTokens }
+        if let tools, let list = try? JSONSerialization.jsonObject(with: tools) as? [Any], !list.isEmpty {
+            body["tools"] = list
+            body["tool_choice"] = "auto"
+        }
         return body
     }
 
@@ -314,6 +320,8 @@ public enum OpenAICompat {
         public var error: String?
         /// "length" when the reply hit the token limit.
         public var finishReason: String?
+        /// Native function calls (models that answer that way instead of with `<tool>` text).
+        public var toolCalls: [NativeToolCalls.Delta] = []
         public init() {}
     }
 
@@ -334,6 +342,7 @@ public enum OpenAICompat {
         c.text = delta["content"] as? String ?? ""
         c.reasoning = delta["reasoning_content"] as? String ?? delta["reasoning"] as? String ?? ""
         c.finishReason = choice["finish_reason"] as? String
+        c.toolCalls = NativeToolCalls.deltas(delta["tool_calls"])
         return c
     }
 
@@ -342,7 +351,11 @@ public enum OpenAICompat {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choice = (json["choices"] as? [[String: Any]])?.first,
               let message = choice["message"] as? [String: Any] else { return nil }
-        return message["content"] as? String
+        let text = message["content"] as? String
+        var calls = NativeToolCalls.Accumulator()
+        calls.add(NativeToolCalls.deltas(message["tool_calls"]))
+        if calls.isEmpty { return text }
+        return [text ?? "", calls.markup].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     /// `GET /models` → model infos (context from `context_length` / `context_window` when given).
