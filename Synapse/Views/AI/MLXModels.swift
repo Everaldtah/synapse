@@ -173,8 +173,11 @@ final class MLXLocalLLM: LocalLLM {
             let task = Task { @MainActor in
                 do {
                     let container = try await manager.container(for: card)
+                    // Rewrites and clean-ups reply with about as much text as they're given, so the reply cap grows with
+                    // the context (8K models: 2,730 tokens; Synapse Alpha's 16K: 4,096).
+                    let maxTokens = min(4_096, max(1_500, card.runContextTokens / 3))
                     let session = ChatSession(container, instructions: instructions,
-                                              generateParameters: GenerateParameters(maxTokens: 1_500, maxKVSize: card.runContextTokens,
+                                              generateParameters: GenerateParameters(maxTokens: maxTokens, maxKVSize: card.runContextTokens,
                                                                                      temperature: 0.5),
                                               additionalContext: ["enable_thinking": false])
                     var filter = ThinkTagFilter()

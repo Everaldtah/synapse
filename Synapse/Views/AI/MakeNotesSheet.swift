@@ -493,7 +493,8 @@ struct MakeNotesSheet: View {
             // Clean transcripts first (mis-hearings, punctuation, paragraphs); the clean text is what the page keeps.
             for item in speech {
                 do {
-                    let cleaned = try await MeetingNotes.cleanTranscript(item.text, title: name, budget: max(1_000, ai.budget(for: concrete).rewrite - 600),
+                    // Parts of at most 4,000 characters: the cleaned part (about as long) always fits one reply.
+                    let cleaned = try await MeetingNotes.cleanTranscript(item.text, title: name, budget: max(1_000, min(4_000, ai.budget(for: concrete).rewrite - 600)),
                                                                          complete: { req in try await ai.complete(req, choice: concrete, fallback: use == .auto) },
                                                                          progress: { step in
                         progressLabel = "\(item.name): \(step.label)"

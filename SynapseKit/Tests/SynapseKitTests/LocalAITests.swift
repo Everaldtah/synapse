@@ -82,11 +82,16 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertNotNil(AIRouter.complexity(of: .translate, inputCharacters: 100, language: "Japanese", budget: ModelCatalog.budget(for: llama)))
         for card in ModelCatalog.downloadable {
             XCTAssertTrue(ModelCatalog.isDownloadable(card))
-            XCTAssertTrue(card.repoID.hasPrefix("mlx-community/"))
+            XCTAssertTrue(card.repoID.hasPrefix("mlx-community/") || card.id == ModelCatalog.synapseAlpha.id)
             XCTAssertFalse(card.stopTokens.isEmpty)
             XCTAssertLessThan(card.downloadBytes, 2_500_000_000, "keep weights under ~2.5 GB for the ~6 GB app limit")
         }
         XCTAssertFalse(ModelCatalog.isDownloadable(ModelCatalog.appleFoundation))
+        // Synapse Alpha runs at 16,000 tokens: more room than the 8K models, still the small-agent settings.
+        let alpha = ModelCatalog.budget(for: ModelCatalog.synapseAlpha)
+        XCTAssertGreaterThan(alpha.prompt, b.prompt)
+        XCTAssertLessThanOrEqual(alpha.prompt, 40_000)
+        XCTAssertEqual(ModelCatalog.downloadable.first?.id, ModelCatalog.synapseAlpha.id)
     }
 
     func testThinkTagFilter() {
