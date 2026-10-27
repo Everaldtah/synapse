@@ -279,7 +279,7 @@ final class AgentBrowser: NSObject {
 
     // MARK: - Helpers
 
-    static func url(for text: String) -> URL {
+    nonisolated static func url(for text: String) -> URL {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let u = URL(string: t), let scheme = u.scheme, ["http", "https"].contains(scheme.lowercased()), u.host != nil { return u }
         let looksLikeHost = !t.contains(" ") && t.contains(".") && !t.hasSuffix(".")
@@ -288,7 +288,7 @@ final class AgentBrowser: NSObject {
         return URL(string: "https://www.google.com/search?q=\(q)")!
     }
 
-    static func keyName(_ s: String) -> String {
+    nonisolated static func keyName(_ s: String) -> String {
         switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "enter", "return", "⏎", "": return "Enter"
         case "esc", "escape": return "Escape"
@@ -301,18 +301,18 @@ final class AgentBrowser: NSObject {
         }
     }
 
-    static func quote(_ s: String) -> String {
+    nonisolated static func quote(_ s: String) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
         let arr = String(decoding: data, as: UTF8.self)
         return String(arr.dropFirst().dropLast())
     }
 
-    static func rect(_ any: Any?) -> CGRect {
+    nonisolated static func rect(_ any: Any?) -> CGRect {
         guard let r = any as? [String: Any] else { return .zero }
         return CGRect(x: r["x"] as? Double ?? 0, y: r["y"] as? Double ?? 0, width: r["w"] as? Double ?? 0, height: r["h"] as? Double ?? 0)
     }
 
-    static func shortHref(_ href: String) -> String? {
+    nonisolated static func shortHref(_ href: String) -> String? {
         guard let u = URL(string: href) else { return nil }
         if u.scheme == "javascript" { return nil }
         var s = (u.host() ?? "") + u.path
@@ -321,7 +321,7 @@ final class AgentBrowser: NSObject {
     }
 
     /// The page-side helper: the map of interactive elements, clicks, typing, keys, scrolling and text.
-    static let script = #"""
+    nonisolated static let script = #"""
     (function(){
     if (window.__synapse) return;
     var S = window.__synapse = { els: [] };
