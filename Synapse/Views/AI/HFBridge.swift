@@ -95,6 +95,9 @@ struct TokenizerBridge: MLXLMCommon.Tokenizer {
 /// Loads a model folder's tokenizer with swift-transformers.
 struct TransformersLoader: MLXLMCommon.TokenizerLoader {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
-        TokenizerBridge(upstream: try await AutoTokenizer.from(modelFolder: directory))
+        // Not strict: newer releases name their class in ways swift-transformers 1.3.5 doesn't list (Qwen3.5's
+        // "Qwen3_5Tokenizer", mlx-community's "TokenizersBackend"). The tokenizer itself is described by
+        // tokenizer.json, so an unknown name falls back to the BPE model those Qwen tokenizers are, instead of failing.
+        TokenizerBridge(upstream: try await AutoTokenizer.from(modelFolder: directory, strict: false))
     }
 }
