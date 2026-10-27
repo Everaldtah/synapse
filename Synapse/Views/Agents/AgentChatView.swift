@@ -31,6 +31,10 @@ struct AgentChatView: View {
 
     var body: some View {
         let session = center.session(conversationID)
+        dialogs(pickers(chat(session)), session: session)
+    }
+
+    private func chat(_ session: AgentSession) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -52,36 +56,50 @@ struct AgentChatView: View {
         .navigationTitle(agent?.name ?? "Agent")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
-        .quickLookPreview($preview)
-        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { for url in urls { attach(url) } }
-        }
-        .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
-        .onChange(of: photoItems) { _, items in addPhotos(items) }
-        .fullScreenCover(isPresented: $showScanner) {
-            DocumentScanner { images in
-                showScanner = false
-                addScan(images)
+    }
+
+    /// Quick Look and the attachment pickers.
+    private func pickers<Content: View>(_ content: Content) -> some View {
+        content
+            .quickLookPreview($preview)
+            .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result { for url in urls { attach(url) } }
             }
-            .ignoresSafeArea()
-        }
-        .sheet(item: Binding(get: { session.approval }, set: { if $0 == nil { session.approval?.resume(false, false) } })) { approval in
-            ApprovalSheet(approval: approval)
-                .presentationDetents([.medium])
-                .interactiveDismissDisabled()
-        }
-        .confirmationDialog("Undo this reply's changes?", isPresented: Binding(get: { undoFor != nil }, set: { if !$0 { undoFor = nil } }),
-                            titleVisibility: .visible) {
-            Button("Undo changes to \(undoFor.map(center.undoCount) ?? 0) page(s)", role: .destructive) {
-                if let id = undoFor { center.undo(id, in: conversationID, store: store) }
-                undoFor = nil
+            .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
+            .onChange(of: photoItems) { _, items in addPhotos(items) }
+            .fullScreenCover(isPresented: $showScanner) {
+                DocumentScanner { images in
+                    showScanner = false
+                    addScan(images)
+                }
+                .ignoresSafeArea()
             }
-        } message: {
-            Text("Pages go back to how they were before the agent changed them, and pages it created are removed. Edits you made to those pages since then are lost.")
-        }
-        .alert("Couldn't attach", isPresented: Binding(get: { attachError != nil }, set: { if !$0 { attachError = nil } })) {
-            Button("OK") { attachError = nil }
-        } message: { Text(attachError ?? "") }
+    }
+
+    /// Approvals, undo confirmation and attach errors.
+    private func dialogs<Content: View>(_ content: Content, session: AgentSession) -> some View {
+        let approval = Binding<PendingApproval?>(get: { session.approval }, set: { value in
+            if value == nil { session.approval?.resume(false, false) }
+        })
+        let confirmUndo = Binding<Bool>(get: { undoFor != nil }, set: { if !$0 { undoFor = nil } })
+        let pages = undoFor.map { center.undoCount($0) } ?? 0
+        return content
+            .sheet(item: approval) { pending in
+                ApprovalSheet(approval: pending)
+                    .presentationDetents([.medium])
+                    .interactiveDismissDisabled()
+            }
+            .confirmationDialog("Undo this reply's changes?", isPresented: confirmUndo, titleVisibility: .visible) {
+                Button("Undo changes to \(pages) page\(pages == 1 ? "" : "s")", role: .destructive) {
+                    if let id = undoFor { center.undo(id, in: conversationID, store: store) }
+                    undoFor = nil
+                }
+            } message: {
+                Text("Pages go back to how they were before the agent changed them, and pages it created are removed. Edits you made to those pages since then are lost.")
+            }
+            .alert("Couldn't attach", isPresented: Binding(get: { attachError != nil }, set: { if !$0 { attachError = nil } })) {
+                Button("OK") { attachError = nil }
+            } message: { Text(attachError ?? "") }
     }
 
     // MARK: Toolbar
@@ -504,6 +522,7 @@ struct WrapLayout: Layout {
     }
 }
 
+@MainActor
 enum AgentText {
     /// Markdown with `[[Page]]` turned into tappable links (inline formatting, whitespace kept).
     static func linkified(_ text: String) -> AttributedString {

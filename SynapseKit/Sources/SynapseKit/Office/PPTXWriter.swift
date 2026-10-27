@@ -210,7 +210,7 @@ public enum PPTXWriter {
                 stack = []
                 continue
             }
-            if slide.title.isEmpty, slide.items.isEmpty, let r = t.range(of: "^\\**title\\**\\s*:\\s*", options: [.regularExpression, .caseInsensitive]) {
+            if slide.title.isEmpty, slide.items.isEmpty, let r = t.range(of: "^\\**title\\**\\s*:\\s*\\**\\s*", options: [.regularExpression, .caseInsensitive]) {
                 slide.title = cleanTitle(String(t[r.upperBound...]))
                 continue
             }
@@ -234,7 +234,7 @@ public enum PPTXWriter {
                 text = String(text.drop { $0 == ">" || $0 == " " })
                 kind = .quote
             }
-            if let r = text.range(of: "^\\**subtitle\\**\\s*:\\s*", options: [.regularExpression, .caseInsensitive]) {
+            if let r = text.range(of: "^\\**subtitle\\**\\s*:\\s*\\**\\s*", options: [.regularExpression, .caseInsensitive]) {
                 text = String(text[r.upperBound...])
             }
             let indented = line.first == " " || line.first == "\t"

@@ -247,6 +247,8 @@ final class OfficeXLSXTests: XCTestCase {
         XCTAssertTrue(styles.contains("numFmtId=\"9\""), "percent style")
         XCTAssertTrue(styles.contains("<b/>"))
         XCTAssertTrue(zip.text("xl/workbook.xml")!.contains("<sheet name=\"Budget\" sheetId=\"1\" r:id=\"rId1\"/>"))
+        XCTAssertEqual(XLSXWriter.shown(2228.7200000000003, format: "\"£\"#,##0.00").count, "£2,228.72".count, "widths use the formatted value")
+        XCTAssertEqual(XLSXWriter.shown(0.125, format: "0.0%"), "12.5%")
     }
 
     func testFormulaEngineOperators() throws {
@@ -326,6 +328,10 @@ final class OfficePPTXTests: XCTestCase {
         XCTAssertEqual(headings[2].items, [PPTXWriter.Slide.Item(kind: .bullet, text: "b"), PPTXWriter.Slide.Item(kind: .heading, text: "Detail"),
                                            PPTXWriter.Slide.Item(kind: .text, text: "text")], "### stays inside the slide")
         XCTAssertEqual(PPTXWriter.slides(fromText: "---\n\n---\n# Only").count, 1, "empty slides dropped")
+        XCTAssertEqual(PPTXWriter.slides(fromText: "# T\n---\n## Q\n> one\n> two")[1].items, [PPTXWriter.Slide.Item(kind: .quote, text: "one two")])
+        let labelled = PPTXWriter.slides(fromText: "**Title:** Launch plan\n**Subtitle:** Spring 2027")
+        XCTAssertEqual(labelled.first?.title, "Launch plan")
+        XCTAssertEqual(labelled.first?.items, [PPTXWriter.Slide.Item(kind: .text, text: "Spring 2027")])
     }
 
     func testDeckPackage() throws {
