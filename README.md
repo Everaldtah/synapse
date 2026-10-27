@@ -6,9 +6,45 @@ Synapse brings the Notion model (pages made of blocks, nested pages, and databas
 calendar and gallery views) together with an Obsidian-style layer: `[[wiki links]]`, backlinks, `#tags`, and
 a live **Neural Graph** of how your notes connect. Everyday AI (transcripts, meeting notes, summaries, rewrites)
 runs **on the iPhone** with Apple Intelligence; complex tasks go to **your own Claude or ChatGPT subscription**
-through Synapse Bridge, or to an Anthropic API key.
+through Synapse Bridge, an Anthropic API key, or a **free API provider** (NVIDIA NIM, Groq, Gemini, OpenRouter…).
+**Agents** do multi-step work for you inside the app: research, writing, databases, the graph, files and code.
 
-> Status: v0.2, early TestFlight (local-first AI). See [docs/PLAN.md](docs/PLAN.md) for the feature map and roadmap.
+> Status: v0.4, early TestFlight. See [docs/PLAN.md](docs/PLAN.md) for the feature map and roadmap.
+
+## Agents (v0.4)
+
+The **Agents** tab is a set of AI agents you chat with. Each works in steps with tools and shows every step:
+
+- **Synapse Agent** (does anything in the app), **Researcher**, **Graph Architect**, **Analyst**, **Presenter** and
+  **Coder** ship built in; make your own with a name, emoji, instructions, a model and the tools it may use.
+- **Controls the app**: lists, searches and reads pages; creates, edits, renames, moves and trashes them; links
+  pages with `[[links]]` and `#tags`; builds databases (typed columns) and adds or updates rows; writes to the daily
+  note; opens pages and tabs.
+- **Shapes the graph**: an overview of hubs, orphans, tags and unlinked mentions; Obsidian-style graph settings it
+  (and you, in the graph's new settings sheet) can change — filters, colour groups (`tag:`, `path:`, `kind:`,
+  `title:`, `line:` queries), node size, link thickness, text fade, arrows, and the forces.
+- **Makes files**: Excel spreadsheets (several sheets, live formulas), PowerPoint decks (six themes, speaker notes),
+  Word documents and PDFs, all generated on the iPhone; any page can be exported the same way from its ••• menu.
+  Files open in Quick Look, share anywhere, and live in Files › Synapse › Agent Files.
+- **Web and terminal**: web search and page reading from the iPhone; a Linux shell on the iPhone (Alpine, via iSH)
+  or in the bridge computer's sandbox, plus Claude Code there for hard tasks. Files the shell makes come back into
+  the app. The **Terminal** screen gives you the same shells directly.
+- **Attachments of any type**: documents (PDF, Word, PowerPoint, Excel, text, code, archives), photos (OCR, and
+  sent as images to vision models), scans, voice recordings and audio/video (transcribed).
+- **Any model, per chat**: on-device (Apple's model or a downloaded MLX model), Claude or ChatGPT subscriptions,
+  the Claude API, or any API provider; small models get a shorter tool list automatically.
+- **Agents ask agents** (`ask_agent`), optional **ask before changes**, and **Undo changes** on any reply that
+  edited your workspace.
+
+### Free API providers
+
+Settings › API providers lists OpenAI-compatible providers with free tiers, checked on 26 October 2026: NVIDIA NIM,
+Groq, Google Gemini, OpenRouter (`:free` models), Mistral, Cloudflare Workers AI, Z.ai GLM Flash, Cohere (trial),
+OVHcloud AI Endpoints (no key), LLM7, Kilo Gateway, Requesty, Vercel AI Gateway, SambaNova, Ollama Cloud and
+Pollinations; plus bring-your-own-key providers (xAI Grok, DeepSeek, Moonshot Kimi, Cerebras, Together, Fireworks,
+Hugging Face, Alibaba Qwen, OpenAI) and any server of your own (LM Studio, Ollama, vLLM). Paste a key, test it,
+star models: starred models appear in every model picker. Free tiers change often, so Synapse also loads each
+provider's live model list. (xAI's Grok API has no free tier; Groq, with a q, does.)
 
 ## Features (v0.1)
 

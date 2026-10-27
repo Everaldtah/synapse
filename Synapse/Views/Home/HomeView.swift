@@ -33,7 +33,7 @@ struct HomeView: View {
                     QuickAction(title: "Today", symbol: "sun.max") { app.open(store.todayNote()) }
                     QuickAction(title: "New page", symbol: "square.and.pencil") { app.open(store.newPage()) }
                     QuickAction(title: "Notes", symbol: "waveform.badge.plus") { showMeeting = true }
-                    QuickAction(title: "Ask", symbol: "sparkles") { app.tab = .ask }
+                    QuickAction(title: "Agents", symbol: "sparkles") { app.tab = .agents }
                     QuickAction(title: "Find", symbol: "arrow.right.circle") { app.showQuickSwitcher = true }
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))

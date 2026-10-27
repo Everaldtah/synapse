@@ -21,6 +21,7 @@
 //                        {"type":"tool",…} {"type":"tool_result",…} … {"type":"done",…} | {"type":"error"}  (Claude Code in the sandbox)
 //   POST /v1/shell      { command, timeout?, cwd? } → { stdout, stderr, exitCode, timedOut, durationMs }   (sandbox)
 //   POST /v1/files      raw bytes; X-Filename → { path, bytes }                                            (sandbox upload)
+//   GET  /v1/files?path=<relative to the workspace> → the file's bytes, X-Filename                         (sandbox download)
 //   POST /v1/extract    raw bytes; X-Filename → { text, method, mime, truncated }                          (any file → text)
 //
 // The last five all run inside the "synapse-sandbox" WSL distro (see bridge/sandbox/setup-wsl-sandbox.ps1),
@@ -33,7 +34,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_UPLOAD = 1024 * 1024 * 1024; // 1 GB — audio/video and file uploads stream to disk, never into memory
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
@@ -672,6 +673,41 @@ async function handleFiles(req, res) {
   });
 }
 
+// ── GET /v1/files?path=… — download a file from the sandbox workspace (files the agent made) ────────────────────
+const MAX_DOWNLOAD = 200 * 1024 * 1024;
+async function handleDownload(req, res, url) {
+  if (!isWindows) return sendJSON(res, 503, { error: 'The sandbox needs Windows + WSL.' });
+  const s = await ensureSandbox();
+  if (!s.ok) return sendJSON(res, 503, { error: s.error });
+  const want = String(url.searchParams.get('path') || '').trim();
+  if (!want || want.includes('\0')) return sendJSON(res, 400, { error: 'Give ?path= (relative to the sandbox workspace).' });
+  // Resolve inside the sandbox (symlinks included) and refuse anything outside the workspace.
+  const probe = [
+    `work=${shq(SANDBOX_WORK)}; want=${shq(want)}`,
+    'case "$want" in /*) p="$want" ;; *) p="$work/$want" ;; esac',
+    'p=$(realpath -e -- "$p" 2>/dev/null) || { echo "No such file in the sandbox."; exit 2; }',
+    'case "$p" in "$work"/*) ;; *) echo "Only files inside the sandbox workspace can be downloaded."; exit 3 ;; esac',
+    '[ -f "$p" ] || { echo "That is a folder, not a file."; exit 4; }',
+    'printf "%s\\n%s\\n" "$(stat -c %s -- "$p")" "$p"',
+  ].join('\n');
+  const r = await runSandboxScript(SANDBOX_USER, null, probe, { timeoutMs: 15000 });
+  if (r.code !== 0) return sendJSON(res, r.code === 2 ? 404 : 400, { error: (r.out || r.err).trim() || 'Download failed.' });
+  const [sizeText, full] = r.out.split('\n');
+  const size = Number(sizeText);
+  if (!(size >= 0) || !full) return sendJSON(res, 500, { error: 'Could not read the file.' });
+  if (size > MAX_DOWNLOAD) return sendJSON(res, 413, { error: 'File larger than 200 MB.' });
+  res.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': String(size),
+    'X-Filename': encodeURIComponent(path.posix.basename(full)),
+  });
+  const child = spawnInSandbox(SANDBOX_USER, null, ['cat', '--', full]);
+  child.stdout.pipe(res);
+  child.on('error', () => res.destroy());
+  req.on('close', () => { if (!child.killed) child.kill(); });
+  log(`download: ${full} (${size} bytes)`);
+}
+
 // Copy a staged Windows file into a sandbox dir as `agent`, suffixing the name to avoid clobbering. Returns the
 // sandbox path. The file bytes are piped to the command's stdin, so (unlike runSandboxScript) the copy script is
 // passed inline as a bash -lc argument — stdin must stay free for the data, not carry the script.
@@ -1075,6 +1111,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/v1/transcribe' && req.method === 'POST') { handleTranscribe(req, res); return; }
   if (url.pathname === '/v1/files' && req.method === 'POST') { handleFiles(req, res); return; }
+  if (url.pathname === '/v1/files' && req.method === 'GET') { handleDownload(req, res, url); return; }
   if (url.pathname === '/v1/extract' && req.method === 'POST') { handleExtract(req, res); return; }
   if (url.pathname === '/v1/shell' && req.method === 'POST') { readBody(req, res, (body) => handleShell(req, res, body)); return; }
   if (url.pathname === '/v1/harness' && req.method === 'POST') { readBody(req, res, (body) => handleHarness(req, res, body)); return; }

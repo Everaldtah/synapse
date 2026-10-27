@@ -274,6 +274,19 @@ struct ModelSwitcherSheet: View {
                     let card = ModelCatalog.claude(opt.id, kind: .api)
                     modelRow(card, selected: ai.apiModel == opt.id, status: cloudStatus) { ai.apiModel = opt.id }
                 }
+            case .freeAPI:
+                let apis = APIProviderStore.shared
+                ForEach(apis.readyProviders) { p in
+                    ForEach(apis.favoriteModels(for: p.id)) { m in
+                        modelRow(ai.apiCard(p.id, m.id), selected: ai.apiProviderID == p.id && ai.apiProviderModel == m.id, status: "Ready · \(p.name)") {
+                            ai.apiProviderID = p.id
+                            ai.apiProviderModel = m.id
+                        }
+                    }
+                }
+                NavigationLink { APIProvidersView() } label: {
+                    Label(apis.readyProviders.isEmpty ? "Add a free API provider" : "API providers", systemImage: "key")
+                }
             }
             Picker("Thinking effort", selection: $ai.effort) {
                 Text("Low").tag("low")
@@ -291,13 +304,20 @@ struct ModelSwitcherSheet: View {
     }
 
     private var cloudStatus: String {
-        if !ai.isConfigured { return ai.provider == .apiKey ? "No API key" : "Bridge not paired" }
+        if !ai.isConfigured {
+            switch ai.provider {
+            case .apiKey: return "No API key"
+            case .freeAPI: return "No API provider chosen"
+            case .bridge, .codex: return "Bridge not paired"
+            }
+        }
         switch ai.provider {
         case .bridge: return ai.bridgeAccount.map { "Connected · \($0)" } ?? "Paired with \(ai.bridgeName.isEmpty ? "bridge" : ai.bridgeName)"
         case .codex:
             if ai.codexInfo?.loggedIn == true { return "Connected · ChatGPT via Codex \(ai.codexInfo?.version.map { "(\($0))" } ?? "")" }
             return ai.codexInfo == nil ? "Paired — checking Codex…" : "Codex not signed in on the bridge computer"
         case .apiKey: return "Connected · API key"
+        case .freeAPI: return "Connected · \(ai.cloudCard.maker)"
         }
     }
 }

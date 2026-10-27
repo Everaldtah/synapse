@@ -61,6 +61,9 @@ The token is stored in `~/.synapse-bridge/config.json`. Every request needs it a
 - `GET /v1/health` returns the bridge name and version, the signed-in Claude account (email and plan, never
   tokens), and Codex's status: installed, signed in, the default model from `~/.codex/config.toml`, and the model
   list from Codex's own cache.
+- `POST /v1/shell`, `POST /v1/files` (upload), `GET /v1/files?path=…` (download a file from the sandbox
+  workspace; paths outside it are refused), `POST /v1/extract`, `POST /v1/harness` and `POST /v1/transcribe`: see
+  the header of `synapse-bridge.mjs`. Agents use them for the Linux shell, file conversion, Claude Code and Whisper.
 - `POST /v1/chat` takes `{ system, messages: [{role, content}], engine?: "claude" | "codex", model?, effort? }` and
   returns server-sent events: `{"type":"meta","engine":…,"model":…}` (the exact model answering),
   `{"type":"delta","text":…}` … `{"type":"done"}`.

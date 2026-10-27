@@ -200,7 +200,7 @@ struct DocumentContent: View {
             .accessibilityLabel("Ask AI about this page")
 
             Menu {
-                PageMenuContent(pageID: pageID, showHistory: $showHistory, showAliases: $showAliases, onExport: exportMarkdown,
+                PageMenuContent(pageID: pageID, showHistory: $showHistory, showAliases: $showAliases, onExport: export,
                                 onComments: {
                                     model.commentsBlock = nil
                                     model.showComments = true
@@ -211,13 +211,25 @@ struct DocumentContent: View {
         }
     }
 
-    private func exportMarkdown() {
+    /// Export the page as Markdown, PDF, Word, PowerPoint (a slide per heading) or Excel (a database's rows), then share it.
+    private func export(_ format: DocumentFormat) {
         model.commit()
         guard let page = store.page(pageID) else { return }
-        let md = MarkdownCodec.export(page, in: store.workspace, includeTitle: true)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(MarkdownCodec.fileName(for: page.displayTitle) + ".md")
-        try? md.data(using: .utf8)?.write(to: url)
-        exportURL = url
+        let name = MarkdownCodec.fileName(for: page.displayTitle)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name + "." + format.rawValue)
+        do {
+            let data: Data
+            if format == .md {
+                data = Data(MarkdownCodec.export(page, in: store.workspace, includeTitle: true).utf8)
+            } else {
+                let text = try DocumentMaker.text(for: page, in: store.workspace, format: format)
+                data = try DocumentMaker.make(format, title: page.displayTitle, text: text)
+            }
+            try data.write(to: url, options: .atomic)
+            exportURL = url
+        } catch {
+            app.show(toast: error.localizedDescription)
+        }
     }
 }
 
@@ -249,7 +261,7 @@ struct PageMenuContent: View {
     let pageID: UUID
     @Binding var showHistory: Bool
     @Binding var showAliases: Bool
-    var onExport: () -> Void
+    var onExport: (DocumentFormat) -> Void
     var onComments: () -> Void
 
     var body: some View {
@@ -271,7 +283,13 @@ struct PageMenuContent: View {
             Section {
                 Button { UIPasteboard.general.string = "[[\(page.displayTitle)]]" } label: { Label("Copy [[link]]", systemImage: "link") }
                 Button { UIPasteboard.general.url = AppModel.link(to: pageID) } label: { Label("Copy app link", systemImage: "link.badge.plus") }
-                Button(action: onExport) { Label("Export Markdown", systemImage: "square.and.arrow.up") }
+                Menu {
+                    ForEach(DocumentFormat.allCases) { format in
+                        if format != .xlsx || page.kind == .database || page.blocks.contains(where: { $0.type == .table }) {
+                            Button { onExport(format) } label: { Label(format.title, systemImage: format.symbol) }
+                        }
+                    }
+                } label: { Label("Export as…", systemImage: "square.and.arrow.up") }
                 Button { if let c = store.duplicate(pageID) { app.open(c) } } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
                 Button { app.open(store.newPage(parent: pageID)) } label: { Label("Add sub-page", systemImage: "doc.badge.plus") }
             }
@@ -292,7 +310,7 @@ extension AppModel {
         case .home: if !homePath.isEmpty { homePath.removeLast() }
         case .search: if !searchPath.isEmpty { searchPath.removeLast() }
         case .graph: if !graphPath.isEmpty { graphPath.removeLast() }
-        case .ask: if !askPath.isEmpty { askPath.removeLast() }
+        case .agents: if !agentsPath.isEmpty { agentsPath.removeLast() }
         case .settings: if !settingsPath.isEmpty { settingsPath.removeLast() }
         }
     }

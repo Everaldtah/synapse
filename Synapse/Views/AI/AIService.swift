@@ -11,6 +11,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
     case codex
     /// Directly to the Claude API with your Anthropic API key.
     case apiKey
+    /// An OpenAI-compatible API provider (NVIDIA NIM, Groq, Gemini, OpenRouter, a server of your own…).
+    case freeAPI
 
     var id: String { rawValue }
 
@@ -19,6 +21,7 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         case .bridge: return "Claude subscription (via Claude Code)"
         case .codex: return "ChatGPT subscription (via Codex)"
         case .apiKey: return "Anthropic API key"
+        case .freeAPI: return "Free API provider (NVIDIA, Groq, Gemini…)"
         }
     }
 
@@ -27,10 +30,11 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         case .bridge: return "Claude subscription"
         case .codex: return "ChatGPT subscription"
         case .apiKey: return "API key"
+        case .freeAPI: return "API provider"
         }
     }
 
-    var usesBridge: Bool { self != .apiKey }
+    var usesBridge: Bool { self == .bridge || self == .codex }
 }
 
 struct AIModelOption: Identifiable, Hashable {
@@ -116,6 +120,33 @@ enum ModelChoice: Hashable {
     case cloud(AIProviderKind, String)
     /// Claude Code in the bridge's Linux sandbox, on the Claude subscription (model alias).
     case harness(String)
+    /// An OpenAI-compatible API provider (`APIProviderInfo.id`) and model id.
+    case api(String, String)
+}
+
+extension ModelChoice {
+    /// Stored form (agents, chats): see `AgentModelKey`.
+    var key: String {
+        switch self {
+        case .auto: return ""
+        case .local(let id): return "local:\(id)"
+        case .cloud(let p, let m): return "cloud:\(p.rawValue):\(m)"
+        case .harness(let m): return "harness:\(m)"
+        case .api(let p, let m): return "api:\(p):\(m)"
+        }
+    }
+
+    init(key: String) {
+        let (kind, a, b) = AgentModelKey.parts(key)
+        let rest = b.isEmpty ? a : a + ":" + b
+        switch kind {
+        case "local": self = .local(rest)
+        case "cloud": self = AIProviderKind(rawValue: a).map { .cloud($0, b.isEmpty ? "default" : b) } ?? .auto
+        case "harness": self = .harness(rest.isEmpty ? "default" : rest)
+        case "api": self = a.isEmpty || b.isEmpty ? .auto : .api(a, b)
+        default: self = .auto
+        }
+    }
 }
 
 struct ModelOption: Identifiable, Hashable {
@@ -171,6 +202,15 @@ final class AIService {
     var codexModel: String {
         get { access(keyPath: \.codexModel); return UserDefaults.standard.string(forKey: "ai.codexModel") ?? "default" }
         set { withMutation(keyPath: \.codexModel) { UserDefaults.standard.set(newValue, forKey: "ai.codexModel") } }
+    }
+    /// The API provider and model used when `provider` is `.freeAPI`.
+    var apiProviderID: String {
+        get { access(keyPath: \.apiProviderID); return UserDefaults.standard.string(forKey: "ai.apiProvider") ?? "" }
+        set { withMutation(keyPath: \.apiProviderID) { UserDefaults.standard.set(newValue, forKey: "ai.apiProvider") } }
+    }
+    var apiProviderModel: String {
+        get { access(keyPath: \.apiProviderModel); return UserDefaults.standard.string(forKey: "ai.apiProviderModel") ?? "" }
+        set { withMutation(keyPath: \.apiProviderModel) { UserDefaults.standard.set(newValue, forKey: "ai.apiProviderModel") } }
     }
     /// low / medium / high
     var effort: String {
@@ -244,6 +284,7 @@ final class AIService {
         switch provider {
         case .bridge, .codex: return !bridgeURL.isEmpty && hasBridgeToken
         case .apiKey: return hasAPIKey
+        case .freeAPI: return !apiProviderID.isEmpty && !apiProviderModel.isEmpty && APIProviderStore.shared.isReady(apiProviderID)
         }
     }
 
@@ -261,7 +302,26 @@ final class AIService {
             return ModelCatalog.codex(id: id, name: m?.name, description: m?.description ?? "", contextWindow: m?.contextWindow)
         case .apiKey:
             return ModelCatalog.claude(apiModel, kind: .api)
+        case .freeAPI:
+            return apiCard(apiProviderID, apiProviderModel)
         }
+    }
+
+    /// A model card for an API provider's model.
+    func apiCard(_ providerID: String, _ model: String) -> ModelCard {
+        let store = APIProviderStore.shared
+        let info = store.models(for: providerID).first { $0.id == model }
+        let provider = store.provider(providerID)
+        let ctx = store.contextTokens(provider: providerID, model: model)
+        var good: [String] = []
+        if let note = info?.note, !note.isEmpty { good.append(note) }
+        if info?.tools == true { good.append("Tool calling") }
+        if store.supportsVision(provider: providerID, model: model) { good.append("Reads images") }
+        return ModelCard(id: "api:\(providerID):\(model)", name: info?.shortName ?? (model.isEmpty ? "No model chosen" : APIModelInfo(model).shortName),
+                         maker: provider?.name ?? providerID, kind: .api, parameters: "Not published", size: "Runs on \(provider?.name ?? "the provider")",
+                         contextWindow: ctx >= 1_000_000 ? "\(ctx / 1_000_000)M tokens" : "\(ctx / 1_000)K tokens",
+                         summary: provider?.terms ?? "", goodAt: good,
+                         limits: [provider?.isFree == true ? "Free-tier rate limits apply" : "Billed to your key", "Requests leave the iPhone"])
     }
 
     /// "Claude Opus 5.5 · Claude subscription".
@@ -288,6 +348,8 @@ final class AIService {
             return "\(local) · \(cloudCard.name) via \(bridgeName.isEmpty ? "bridge" : bridgeName)"
         case .apiKey:
             return hasAPIKey ? "\(local) · \(cloudCard.name) (API key)" : "\(local) · no API key"
+        case .freeAPI:
+            return isConfigured ? "\(local) · \(cloudCard.name) via \(cloudCard.maker)" : "\(local) · no API provider chosen"
         }
     }
 
@@ -443,6 +505,7 @@ final class AIService {
         case .bridge: return bridgeModel
         case .codex: return codexModel
         case .apiKey: return apiModel
+        case .freeAPI: return apiProviderModel
         }
     }
 
@@ -465,6 +528,8 @@ final class AIService {
                 return Self.failing(AIError(message: "Add an Anthropic API key in Settings › AI models first."))
             }
             return AnthropicClient(apiKey: key, model: model, effort: effort).stream(request)
+        case .freeAPI:
+            return APIProviderStore.shared.stream(request, provider: apiProviderID, model: model)
         }
     }
 
@@ -526,6 +591,16 @@ final class AIService {
                 ModelOption(choice: .cloud(.apiKey, $0.id), title: $0.title, detail: $0.detail, engine: .cloud)
             }))
         }
+        let apis = APIProviderStore.shared
+        for p in apis.readyProviders {
+            let models = apis.favoriteModels(for: p.id)
+            guard !models.isEmpty else { continue }
+            groups.append(ModelOptionGroup(title: p.name + (p.isFree ? " · free" : ""), options: models.map { m in
+                var detail = m.note
+                if let c = m.contextTokens { detail += (detail.isEmpty ? "" : " · ") + (c >= 1_000_000 ? "\(c / 1_000_000)M" : "\(c / 1_000)K") + " context" }
+                return ModelOption(choice: .api(p.id, m.id), title: m.shortName, detail: detail, engine: .cloud)
+            }))
+        }
         return groups
     }
 
@@ -540,7 +615,7 @@ final class AIService {
         switch choice {
         case .auto: return route(complexReason: complexReason).engine
         case .local: return .onDevice
-        case .cloud, .harness: return .cloud
+        case .cloud, .harness, .api: return .cloud
         }
     }
 
@@ -553,8 +628,10 @@ final class AIService {
             switch p {
             case .codex: return ModelCatalog.displayName(codex: m == "default" ? (codexInfo?.defaultModel ?? "default") : m)
             case .bridge, .apiKey: return ModelCatalog.claude(m, kind: p == .apiKey ? .api : .subscription).name
+            case .freeAPI: return APIProviderStore.shared.displayName(provider: apiProviderID, model: m)
             }
         case .harness(let m): return ModelCatalog.claude(m, kind: .subscription).name + " · harness"
+        case .api(let p, let m): return APIProviderStore.shared.displayName(provider: p, model: m)
         }
     }
 
@@ -562,8 +639,13 @@ final class AIService {
     func budget(for choice: ModelChoice, complexReason: String? = nil) -> LocalBudget {
         switch choice {
         case .local(let id): return localLLM(id).budget
+        case .cloud(.freeAPI, let m): return .context(tokens: APIProviderStore.shared.contextTokens(provider: apiProviderID, model: m))
         case .cloud, .harness: return .context(tokens: 200_000)
-        case .auto: return engine(for: .auto, complexReason: complexReason) == .onDevice ? localBudget : .context(tokens: 200_000)
+        case .api(let p, let m): return .context(tokens: APIProviderStore.shared.contextTokens(provider: p, model: m))
+        case .auto:
+            if engine(for: .auto, complexReason: complexReason) == .onDevice { return localBudget }
+            return provider == .freeAPI ? .context(tokens: APIProviderStore.shared.contextTokens(provider: apiProviderID, model: apiProviderModel))
+                : .context(tokens: 200_000)
         }
     }
 
@@ -585,6 +667,27 @@ final class AIService {
             return tools.harnessText(request, model: m) { [weak self] model in
                 self?.lastAnswer?.model = ModelCatalog.displayName(claude: model) + " · harness"
             }
+        case .api(let p, let m):
+            lastAnswer = AIAnswerInfo(engine: .cloud, model: name(for: choice))
+            return APIProviderStore.shared.stream(request, provider: p, model: m)
+        }
+    }
+
+    /// Whether a stored choice can run now (a removed key or an uninstalled model falls back to Auto).
+    func isAvailable(_ choice: ModelChoice) -> Bool {
+        switch choice {
+        case .auto: return true
+        case .local(let id):
+            if id == apple.card.id { return apple.unavailableReason == nil }
+            return ModelCatalog.downloadable.contains { $0.id == id && models.isDownloaded($0) }
+        case .cloud(let p, _):
+            switch p {
+            case .bridge, .codex: return !bridgeURL.isEmpty && hasBridgeToken
+            case .apiKey: return hasAPIKey
+            case .freeAPI: return provider == .freeAPI && isConfigured
+            }
+        case .harness: return bridgeHarness?.loggedIn == true && bridgeEndpoint != nil
+        case .api(let p, _): return APIProviderStore.shared.isReady(p)
         }
     }
 

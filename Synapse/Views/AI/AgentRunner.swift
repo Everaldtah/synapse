@@ -3,7 +3,7 @@ import SynapseKit
 
 /// One step of an agent run, for the steps list.
 struct AgentStep: Identifiable, Equatable {
-    let id = UUID()
+    var id = UUID()
     var call: AgentToolCall
     var output: String?
     var failed = false
@@ -73,7 +73,7 @@ final class AgentRunner {
                     steps.wrappedValue[i].output = output
                     steps.wrappedValue[i].failed = failed
                 }
-            case .answer:
+            case .answer, .note:
                 break
             }
         })
@@ -181,17 +181,67 @@ struct AgentStepsView: View {
         case "shell": return "terminal"
         case "claude_code": return "sparkles.rectangle.stack"
         case "read_source": return "doc.text.magnifyingglass"
+        case "list_pages": return "list.bullet.rectangle"
+        case "search_workspace": return "text.magnifyingglass"
+        case "read_page": return "doc.text"
+        case "create_page": return "doc.badge.plus"
+        case "edit_page": return "square.and.pencil"
+        case "rename_page": return "character.cursor.ibeam"
+        case "move_page": return "arrow.turn.down.right"
+        case "delete_page": return "trash"
+        case "link_pages": return "link"
+        case "tag_page": return "number"
+        case "create_database", "add_rows", "update_row": return "tablecells"
+        case "daily_note": return "calendar"
+        case "graph_overview", "graph_settings", "set_graph", "graph_group", "show_graph": return "point.3.filled.connected.trianglepath.dotted"
+        case "open": return "arrow.up.forward.app"
+        case "create_spreadsheet": return "tablecells.badge.ellipsis"
+        case "create_presentation": return "rectangle.on.rectangle.angled"
+        case "create_document", "create_pdf", "export_page": return "doc.richtext"
+        case "save_file": return "square.and.arrow.down"
+        case "ask_agent": return "person.2"
         default: return "wrench.and.screwdriver"
         }
     }
 
     static func title(_ call: AgentToolCall) -> String {
+        let a = call.attributes
+        let first = call.input.split(separator: "\n").first.map(String.init) ?? ""
         switch call.name {
         case "web_search": return "Searched the web: \(call.input)"
         case "fetch_url": return "Read \(call.input)"
         case "shell": return "\(call.attributes["where"] == "iphone" ? "iPhone" : "Computer") $ \(call.input)"
         case "claude_code": return "Claude Code: \(call.input)"
         case "read_source": return "Read source: \(call.input)"
+        case "list_pages": return call.input.isEmpty ? "Listed pages" : "Listed pages: \(call.input)"
+        case "search_workspace": return "Searched notes: \(call.input)"
+        case "read_page": return "Read \(call.input)"
+        case "create_page": return "Created page \(a["title"] ?? first)"
+        case "edit_page": return "\(a["mode"] == "replace" ? "Rewrote" : "Edited") \(a["title"] ?? "a page")"
+        case "rename_page": return "Renamed \(a["title"] ?? "") → \(call.input)"
+        case "move_page": return "Moved \(a["title"] ?? "") into \(call.input)"
+        case "delete_page": return "Moved \(a["title"] ?? call.input) to the Trash"
+        case "link_pages": return "Linked \(a["from"] ?? "") → \(call.input.replacingOccurrences(of: "\n", with: ", "))"
+        case "tag_page": return "Tagged \(a["title"] ?? "") \(call.input)"
+        case "create_database": return "Created database \(a["title"] ?? "")"
+        case "add_rows": return "Added rows to \(a["database"] ?? "")"
+        case "update_row": return "Updated \(a["row"] ?? "") in \(a["database"] ?? "")"
+        case "daily_note": return call.input.isEmpty ? "Read today's note" : "Added to today's note"
+        case "graph_overview": return "Looked at the graph"
+        case "graph_settings": return "Read graph settings"
+        case "set_graph":
+            let pairs = a.keys.sorted().map { "\($0)=\(a[$0] ?? "")" } + (call.input.isEmpty ? [] : [call.input.replacingOccurrences(of: "\n", with: ", ")])
+            return "Graph view: " + pairs.joined(separator: ", ")
+        case "graph_group": return "Graph group \(call.input) → \(a["color"] ?? "")"
+        case "show_graph": return a["focus"].map { "Showed the graph around \($0)" } ?? "Showed the graph"
+        case "open": return "Opened \(call.input)"
+        case "create_spreadsheet": return "Made spreadsheet \(a["title"] ?? "")"
+        case "create_presentation": return "Made presentation \(a["title"] ?? "")"
+        case "create_document": return "Made Word document \(a["title"] ?? "")"
+        case "create_pdf": return "Made PDF \(a["title"] ?? "")"
+        case "export_page": return "Exported \(call.input) as \(a["format"] ?? "pdf")"
+        case "save_file": return "Saved \(call.input) to Synapse"
+        case "ask_agent": return "Asked \(a["agent"] ?? "an agent"): \(first)"
         default: return "\(call.name): \(call.input)"
         }
     }

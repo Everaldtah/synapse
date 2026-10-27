@@ -94,6 +94,28 @@ struct BridgeTools {
         return try await json(try fileRequest("v1/files", file: file), as: Saved.self).path
     }
 
+    /// Download a file from the sandbox workspace (a path relative to it, as the shell sees it) into `folder`;
+    /// returns the saved file (named as in the sandbox, made unique in `folder`).
+    func download(_ path: String, into folder: URL) async throws -> URL {
+        var comps = URLComponents(url: base.appendingPathComponent("v1/files"), resolvingAgainstBaseURL: false)
+        comps?.queryItems = [URLQueryItem(name: "path", value: path)]
+        guard let url = comps?.url else { throw AIError(message: "Bad file path.") }
+        var req = request("v1/files", method: "GET", timeout: 600)
+        req.url = url
+        let (tmp, resp) = try await URLSession.shared.download(for: req)
+        let http = resp as? HTTPURLResponse
+        guard http?.statusCode == 200 else {
+            let body = (try? Data(contentsOf: tmp)) ?? Data()
+            throw AIError(message: Self.failure(code: http?.statusCode ?? 0, body: body))
+        }
+        let name = (http?.value(forHTTPHeaderField: "X-Filename")?.removingPercentEncoding).flatMap { $0.isEmpty ? nil : $0 }
+            ?? (path as NSString).lastPathComponent
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let dest = AgentFileStore.uniqueURL(in: folder, name: name)
+        try FileManager.default.moveItem(at: tmp, to: dest)
+        return dest
+    }
+
     /// Any file to text with the sandbox's converters (pandoc, LibreOffice, pdftotext, tesseract…).
     func extract(_ file: URL) async throws -> (text: String, method: String) {
         struct Extracted: Decodable { var text: String; var method: String? }

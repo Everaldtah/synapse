@@ -3,7 +3,7 @@ import Observation
 import SynapseKit
 
 enum AppTab: Hashable {
-    case home, search, graph, ask, settings
+    case home, search, graph, agents, settings
 }
 
 enum Route: Hashable {
@@ -14,6 +14,14 @@ enum Route: Hashable {
     case tags
     case tag(String)
     case databases
+    /// Ask Synapse: quick questions about the workspace.
+    case ask
+    case agentChat(UUID)
+    /// Edit an agent (nil = a new one).
+    case agentEditor(UUID?)
+    case agentFiles
+    case terminal
+    case apiProviders
 }
 
 /// Pairing details from a `synapse://pair?...` link or QR code.
@@ -32,20 +40,20 @@ final class AppModel {
     var homePath: [Route] = []
     var searchPath: [Route] = []
     var graphPath: [Route] = []
-    var askPath: [Route] = []
+    var agentsPath: [Route] = []
     var settingsPath: [Route] = []
 
     var pairing: PairingRequest?
     var showQuickSwitcher = false
     var toast: String?
 
-    /// Push a route on the current tab (Settings and Ask open pages on Home).
+    /// Push a route on the current tab (Settings and Agents open pages on Home).
     func push(_ route: Route) {
         switch tab {
         case .home: homePath.append(route)
         case .search: searchPath.append(route)
         case .graph: graphPath.append(route)
-        case .ask, .settings:
+        case .agents, .settings:
             tab = .home
             homePath.append(route)
         }
@@ -62,7 +70,7 @@ final class AppModel {
         case .home: return homePath
         case .search: return searchPath
         case .graph: return graphPath
-        case .ask: return askPath
+        case .agents: return agentsPath
         case .settings: return settingsPath
         }
     }
@@ -72,7 +80,7 @@ final class AppModel {
         case .home: homePath = []
         case .search: searchPath = []
         case .graph: graphPath = []
-        case .ask: askPath = []
+        case .agents: agentsPath = []
         case .settings: settingsPath = []
         }
     }

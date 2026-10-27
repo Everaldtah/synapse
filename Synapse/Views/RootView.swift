@@ -26,11 +26,11 @@ struct RootView: View {
             .tabItem { Label("Graph", systemImage: "point.3.filled.connected.trianglepath.dotted") }
             .tag(AppTab.graph)
 
-            NavigationStack(path: $app.askPath) {
-                AskView().withRoutes()
+            NavigationStack(path: $app.agentsPath) {
+                AgentsHomeView().withRoutes()
             }
-            .tabItem { Label("Ask", systemImage: "sparkles") }
-            .tag(AppTab.ask)
+            .tabItem { Label("Agents", systemImage: "sparkles") }
+            .tag(AppTab.agents)
 
             NavigationStack(path: $app.settingsPath) {
                 SettingsView().withRoutes()
@@ -69,6 +69,12 @@ extension View {
             case .tags: TagsView()
             case .tag(let t): TagPagesView(tag: t)
             case .databases: DatabasesListView()
+            case .ask: AskView()
+            case .agentChat(let id): AgentChatView(conversationID: id)
+            case .agentEditor(let id): AgentEditorView(agentID: id)
+            case .agentFiles: AgentFilesView()
+            case .terminal: TerminalView()
+            case .apiProviders: APIProvidersView()
             }
         }
     }

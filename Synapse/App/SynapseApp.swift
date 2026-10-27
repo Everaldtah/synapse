@@ -6,6 +6,7 @@ struct SynapseApp: App {
     @State private var store = WorkspaceStore()
     @State private var app = AppModel()
     @State private var ai = AIService()
+    @State private var agents = AgentCenter()
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appearance") private var appearance = 0
 
@@ -15,6 +16,7 @@ struct SynapseApp: App {
                 .environment(store)
                 .environment(app)
                 .environment(ai)
+                .environment(agents)
                 .tint(Palette.accent)
                 .preferredColorScheme(appearance == 1 ? .light : (appearance == 2 ? .dark : nil))
                 .onOpenURL { app.handle(url: $0, store: store) }

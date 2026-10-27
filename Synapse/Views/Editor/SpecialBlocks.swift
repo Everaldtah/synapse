@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 import PhotosUI
 import SynapseKit
@@ -112,6 +113,8 @@ struct LinkCardBlockView: View {
     let item: BlockItem
     let model: PageEditorModel
     @State private var urlText = ""
+    /// A file kept with the page (`asset:`), shown in Quick Look.
+    @State private var preview: URL?
 
     var body: some View {
         let b = item.block
@@ -134,20 +137,22 @@ struct LinkCardBlockView: View {
             .disabled(model.readOnly)
         } else {
             let url = URL(string: b.url)
+            let local = b.url.hasPrefix("asset:") ? AssetStore.url(for: b.url) : nil
             Button {
-                if let url { openURL(url) }
+                if let local { preview = local } else if let url { openURL(url) }
             } label: {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(b.caption.isEmpty ? (url?.host ?? b.url) : b.caption)
                             .font(.subheadline.weight(.semibold)).lineLimit(2)
-                        Text(b.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(local.map { $0.pathExtension.uppercased() + " file · tap to open" } ?? b.url)
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         if b.type == .embed {
                             Label("Embed · opens in Safari", systemImage: "play.rectangle").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
-                    Image(systemName: b.type == .file ? "doc" : "globe")
+                    Image(systemName: b.type == .file ? AgentFile(name: "", path: "", kind: AgentFile.kind(forExtension: local?.pathExtension ?? "")).symbol : "globe")
                         .font(.title2)
                         .foregroundStyle(Palette.accent)
                         .frame(width: 52, height: 52)
@@ -159,6 +164,7 @@ struct LinkCardBlockView: View {
             }
             .buttonStyle(.plain)
             .padding(.vertical, 4)
+            .quickLookPreview($preview)
         }
     }
 

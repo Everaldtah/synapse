@@ -14,10 +14,22 @@ final class GraphSimulation {
     @ObservationIgnored private var running: Task<Void, Never>?
     @ObservationIgnored var neighbors: [String: Set<String>] = [:]
     @ObservationIgnored var nodeByID: [String: GraphNode] = [:]
+    /// Bumped by every load, so cached node colours know when to refresh.
+    @ObservationIgnored private(set) var version = 0
+    @ObservationIgnored var colorCache: (key: ColorKey, colors: [String: Color])?
+
+    /// What node colours depend on.
+    struct ColorKey: Equatable {
+        var version: Int
+        var mode: GraphColorMode
+        var groups: [GraphGroup]
+        var revision: Int
+    }
 
     func load(_ d: GraphData) {
         let first = data.nodes.isEmpty
         data = d
+        version &+= 1
         layout.load(d, reheat: first ? 1 : 0.4)
         if first { layout.warmUp(steps: 60) }
         neighbors = [:]
@@ -73,39 +85,43 @@ final class GraphSimulation {
     }
 }
 
-enum GraphColorMode: String, CaseIterable {
-    case type, tag
-
-    var title: String { self == .type ? "Type" : "First tag" }
-}
-
 struct GraphScreen: View {
     @Environment(WorkspaceStore.self) private var store
     @Environment(AppModel.self) private var app
     let focus: UUID?
 
     @State private var sim = GraphSimulation()
-    @State private var options = GraphOptions()
     @State private var localMode = true
-    @State private var colorMode = GraphColorMode.type
+    @State private var showSettings = false
     @State private var dragStartOffset: CGSize?
     @State private var draggingNode: String?
     @State private var pinchStartZoom: CGFloat?
     @State private var canvasSize = CGSize(width: 390, height: 600)
     @State private var didFit = false
 
+    /// Filters, colours, display and forces, shared with every graph screen and the AI agent.
+    private var graphSettings: GraphSettingsStore { GraphSettingsStore.shared }
+
     private var effectiveOptions: GraphOptions {
-        var o = options
+        var o = graphSettings.settings.options
         o.focus = (focus != nil && localMode) ? focus : nil
         return o
     }
 
+    /// The forces, to notice when they change.
+    private var forces: [Double] {
+        let s = graphSettings.settings
+        return [s.centerForce, s.repelForce, s.linkForce, s.linkDistance]
+    }
+
     var body: some View {
         let _ = sim.frame
+        let settings = graphSettings.settings
+        @Bindable var shared = graphSettings
         ZStack(alignment: .bottom) {
             Color(UIColor.systemBackground).ignoresSafeArea()
             GeometryReader { geo in
-                Canvas { ctx, size in draw(ctx, size) }
+                Canvas { ctx, size in draw(ctx, size, settings) }
                     .contentShape(Rectangle())
                     .gesture(dragGesture(geo.size))
                     .simultaneousGesture(pinchGesture)
@@ -126,16 +142,29 @@ struct GraphScreen: View {
         }
         .navigationTitle(focus.flatMap { store.page($0)?.displayTitle }.map { "Graph · \($0)" } ?? "Graph")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $options.search, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Filter nodes")
+        .searchable(text: $shared.settings.search, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Filter nodes")
         .toolbar { toolbar }
+        .sheet(isPresented: $showSettings) {
+            GraphSettingsSheet(localMode: focus != nil ? $localMode : nil)
+        }
         .onAppear { rebuild() }
         .onDisappear { sim.stop() }
         .onChange(of: store.linkIndex.outgoing) { _, _ in rebuild() }
+        .onChange(of: store.linkIndex.tags) { _, _ in rebuild() }
         .onChange(of: effectiveOptions) { _, _ in rebuild() }
+        .onChange(of: forces) { _, _ in
+            graphSettings.settings.applyForces(to: sim.layout)
+            sim.reheat()
+        }
+        .onChange(of: graphSettings.fitRequest) { _, _ in
+            withAnimation(.easeOut(duration: 0.3)) { sim.fit(in: canvasSize) }
+        }
+        .onChange(of: graphSettings.reheatRequest) { _, _ in sim.reheat() }
         .animation(.spring(duration: 0.25), value: sim.selected)
     }
 
     private func rebuild() {
+        graphSettings.settings.applyForces(to: sim.layout)
         let data = GraphBuilder.build(store.workspace, index: store.linkIndex, options: effectiveOptions)
         sim.load(data)
         if !didFit {
@@ -153,43 +182,14 @@ struct GraphScreen: View {
                 withAnimation(.easeOut(duration: 0.3)) { sim.fit(in: canvasSize) }
             } label: { Image(systemName: "scope") }
             .accessibilityLabel("Fit to screen")
-            Menu {
-                if focus != nil {
-                    Picker("Scope", selection: $localMode) {
-                        Text("Local graph").tag(true)
-                        Text("Whole workspace").tag(false)
-                    }
-                    if localMode {
-                        Picker("Depth", selection: $options.depth) {
-                            ForEach(1...4, id: \.self) { Text("\($0) link\($0 == 1 ? "" : "s") away").tag($0) }
-                        }
-                    }
-                }
-                Section("Show") {
-                    Toggle("Tags", isOn: $options.showTags)
-                    Toggle("Unresolved links", isOn: $options.showUnresolved)
-                    Toggle("Orphans", isOn: $options.showOrphans)
-                    Toggle("Database rows", isOn: $options.showRows)
-                    Toggle("Daily notes", isOn: $options.showDaily)
-                    Toggle("Relations", isOn: $options.showRelations)
-                    Toggle("Page hierarchy", isOn: $options.showHierarchy)
-                }
-                Picker("Colour by", selection: $colorMode) {
-                    ForEach(GraphColorMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Button { sim.reheat() } label: { Label("Re-run layout", systemImage: "arrow.triangle.2.circlepath") }
-            } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
+            Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                .accessibilityLabel("Graph settings")
         }
     }
 
     // MARK: Drawing
 
-    private func color(for node: GraphNode) -> Color {
-        if colorMode == .tag {
-            if node.kind == .tag { return Tint.stable(for: node.title).dot }
-            if let t = node.tag { return Tint.stable(for: t).dot }
-            return Color.gray
-        }
+    private func typeColor(_ node: GraphNode) -> Color {
         switch node.kind {
         case .page: return Palette.accent
         case .database: return Tint.orange.dot
@@ -200,41 +200,81 @@ struct GraphScreen: View {
         }
     }
 
-    private func radius(_ node: GraphNode) -> CGFloat {
-        let base: CGFloat = node.kind == .tag ? 3.5 : 4.5
-        return (base + CGFloat(sqrt(Double(node.degree))) * 2.2) * min(1.6, max(0.6, sim.zoom))
+    /// Every node's colour, cached until the graph, the colour mode, the groups or (for groups) the pages change.
+    private func nodeColors(_ s: GraphViewSettings) -> [String: Color] {
+        let grouped = s.colorMode == .groups
+        let key = GraphSimulation.ColorKey(version: sim.version, mode: s.colorMode, groups: grouped ? s.groups : [],
+                                           revision: grouped ? store.revision : 0)
+        if let cache = sim.colorCache, cache.key == key { return cache.colors }
+        let ws = store.workspace
+        var colors: [String: Color] = [:]
+        for node in sim.data.nodes {
+            switch s.colorMode {
+            case .type:
+                colors[node.id] = typeColor(node)
+            case .tag:
+                // Tag nodes carry their own tag, so #idea and the pages tagged idea share a colour.
+                colors[node.id] = node.tag.map { Tint.stable(for: $0).dot } ?? Color.gray
+            case .groups:
+                // First matching group wins; the rest keep a hint of their type colour, greyed (like Obsidian).
+                let page = node.pageID.flatMap { ws[$0] }
+                if let tint = GraphViewSettings.groupColor(for: node, page: page, workspace: ws, groups: s.groups) {
+                    colors[node.id] = tint.dot
+                } else {
+                    colors[node.id] = typeColor(node).mix(with: .gray, by: 0.75)
+                }
+            }
+        }
+        sim.colorCache = (key, colors)
+        return colors
     }
 
-    private func draw(_ ctx: GraphicsContext, _ size: CGSize) {
+    private func radius(_ node: GraphNode, _ s: GraphViewSettings) -> CGFloat {
+        let base: CGFloat = node.kind == .tag ? 3.5 : 4.5
+        return (base + CGFloat(sqrt(Double(node.degree))) * 2.2) * min(1.6, max(0.6, sim.zoom)) * CGFloat(s.nodeSize)
+    }
+
+    /// Hit areas grow with big nodes.
+    private var hitScale: CGFloat { max(1, CGFloat(graphSettings.settings.nodeSize)) }
+
+    private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ s: GraphViewSettings) {
         let layout = sim.layout
         let selected = sim.selected
         let hood = selected.flatMap { sim.neighbors[$0] } ?? []
+        let thickness = CGFloat(s.linkThickness)
+        let colors = nodeColors(s)
         // Edges
         for e in sim.data.edges {
             guard let a = layout.position(of: e.source), let b = layout.position(of: e.target) else { continue }
+            let from = sim.toScreen(a, size), to = sim.toScreen(b, size)
             var path = Path()
-            path.move(to: sim.toScreen(a, size))
-            path.addLine(to: sim.toScreen(b, size))
+            path.move(to: from)
+            path.addLine(to: to)
             let lit = selected != nil && (e.source == selected || e.target == selected)
             let dim = selected != nil && !lit
-            let style: StrokeStyle = e.kind == .relation ? StrokeStyle(lineWidth: 1, dash: [4, 3]) :
-                (e.kind == .parent ? StrokeStyle(lineWidth: 0.8, dash: [1, 3]) : StrokeStyle(lineWidth: lit ? 1.8 : 1))
-            ctx.stroke(path, with: .color(lit ? Palette.accent : Color.secondary.opacity(dim ? 0.12 : 0.35)), style: style)
+            let style: StrokeStyle = e.kind == .relation ? StrokeStyle(lineWidth: thickness, dash: [4, 3]) :
+                (e.kind == .parent ? StrokeStyle(lineWidth: 0.8 * thickness, dash: [1, 3]) : StrokeStyle(lineWidth: (lit ? 1.8 : 1) * thickness))
+            let color = lit ? Palette.accent : Color.secondary.opacity(dim ? 0.12 : 0.35)
+            ctx.stroke(path, with: .color(color), style: style)
+            if s.showArrows, e.kind == .link, let target = sim.nodeByID[e.target] {
+                drawArrow(ctx, from: from, to: to, gap: radius(target, s) + 1.5, lineWidth: style.lineWidth, color: color)
+            }
         }
         // Nodes
-        let showAllLabels = sim.zoom > 0.9 || sim.data.nodes.count < 25
+        let showAllLabels = sim.zoom > CGFloat(s.labelZoom) || sim.data.nodes.count < 25
         for node in sim.data.nodes {
             guard let p = layout.position(of: node.id) else { continue }
             let c = sim.toScreen(p, size)
-            if c.x < -50 || c.y < -50 || c.x > size.width + 50 || c.y > size.height + 50 { continue }
-            let r = radius(node)
+            let r = radius(node, s)
+            let margin = 50 + r
+            if c.x < -margin || c.y < -margin || c.x > size.width + margin || c.y > size.height + margin { continue }
             let isSel = node.id == selected
             let dim = selected != nil && !isSel && !hood.contains(node.id)
             let rect = CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
             if isSel {
                 ctx.fill(Path(ellipseIn: rect.insetBy(dx: -5, dy: -5)), with: .color(Palette.accent.opacity(0.25)))
             }
-            let fill = color(for: node).opacity(dim ? 0.25 : 1)
+            let fill = (colors[node.id] ?? typeColor(node)).opacity(dim ? 0.25 : 1)
             if node.kind == .unresolved {
                 ctx.stroke(Path(ellipseIn: rect), with: .color(fill), lineWidth: 1.5)
             } else {
@@ -249,6 +289,24 @@ struct GraphScreen: View {
         }
     }
 
+    /// A small arrowhead on a link, its tip just outside the target node.
+    private func drawArrow(_ ctx: GraphicsContext, from a: CGPoint, to b: CGPoint, gap: CGFloat, lineWidth: CGFloat, color: Color) {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let length = sqrt(dx * dx + dy * dy)
+        let size = max(5, 3 + lineWidth * 2.5)
+        guard length > gap + size else { return }
+        let ux = dx / length, uy = dy / length
+        let tip = CGPoint(x: b.x - ux * gap, y: b.y - uy * gap)
+        let base = CGPoint(x: tip.x - ux * size, y: tip.y - uy * size)
+        let half = size * 0.5
+        var head = Path()
+        head.move(to: tip)
+        head.addLine(to: CGPoint(x: base.x - uy * half, y: base.y + ux * half))
+        head.addLine(to: CGPoint(x: base.x + uy * half, y: base.y - ux * half))
+        head.closeSubpath()
+        ctx.fill(head, with: .color(color))
+    }
+
     // MARK: Gestures
 
     private func dragGesture(_ size: CGSize) -> some Gesture {
@@ -256,7 +314,7 @@ struct GraphScreen: View {
             .onChanged { v in
                 if dragStartOffset == nil && draggingNode == nil {
                     let w = sim.toWorld(v.startLocation, size)
-                    if let hit = sim.layout.hitTest(w, radius: Double(18 / sim.zoom)) {
+                    if let hit = sim.layout.hitTest(w, radius: Double(18 * hitScale / sim.zoom)) {
                         draggingNode = hit
                         sim.selected = hit
                     } else {
@@ -291,7 +349,7 @@ struct GraphScreen: View {
 
     private func tap(_ point: CGPoint, _ size: CGSize) {
         let w = sim.toWorld(point, size)
-        let hit = sim.layout.hitTest(w, radius: Double(22 / sim.zoom))
+        let hit = sim.layout.hitTest(w, radius: Double(22 * hitScale / sim.zoom))
         if let hit, hit == sim.selected, let node = sim.nodeByID[hit] {
             open(node)
         } else {

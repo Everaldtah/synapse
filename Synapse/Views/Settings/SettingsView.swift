@@ -37,8 +37,15 @@ struct SettingsView: View {
                     }
                 }
                 NavigationLink { ConnectClaudeView() } label: { Label("Cloud connection", systemImage: "link") }
+                NavigationLink { APIProvidersView() } label: {
+                    LabeledContent {
+                        let n = APIProviderStore.shared.readyProviders.count
+                        Text(n == 0 ? "NVIDIA, Groq, Gemini…" : "\(n) connected")
+                    } label: { Label("API providers", systemImage: "key") }
+                }
+                Button { app.tab = .agents } label: { Label("Agents", systemImage: "sparkles") }
             } footer: {
-                Text("Everyday AI runs on this iPhone (Apple Intelligence). Complex tasks go to your Claude or ChatGPT subscription through Synapse Bridge on your computer, or to an Anthropic API key.")
+                Text("Everyday AI runs on this iPhone (Apple Intelligence). Complex tasks go to your Claude or ChatGPT subscription through Synapse Bridge on your computer, an Anthropic API key, or a free API provider such as NVIDIA NIM, Groq or Gemini.")
             }
 
             Section("Appearance") {
@@ -193,6 +200,8 @@ struct ConnectClaudeView: View {
                 } footer: {
                     Text("Away from home? Install Tailscale on both devices and use the bridge's 100.x address, or run `tailscale serve` for HTTPS.")
                 }
+            } else if ai.provider == .freeAPI {
+                FreeAPIProviderSection()
             } else {
                 Section {
                     SecureField(ai.hasAPIKey ? "Saved — paste to replace" : "sk-ant-…", text: $apiKey)
