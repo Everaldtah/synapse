@@ -169,6 +169,8 @@ struct AgentChatView: View {
             return ["Make a 6-slide deck from my page \"Project plan\"", "Write a one-page PDF summary of this week's notes"]
         case AgentPresets.coder.id:
             return ["Convert the attached audio to MP3 and save it", "Write and run a Python script that plots y = x²"]
+        case AgentPresets.browser.id:
+            return ["Go to Wikipedia and find out when the Eiffel Tower opened", "Search Hacker News for the top story today and summarise it", "Open bbc.com and tell me the main headline"]
         default:
             return ["Organise my workspace: group pages under topics", "Create a reading list database with five books", "Show my graph with tags, coloured by tag"]
         }
