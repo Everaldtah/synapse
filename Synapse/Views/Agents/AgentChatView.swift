@@ -42,6 +42,7 @@ struct AgentChatView: View {
                     ForEach(conversation?.messages ?? []) { m in
                         message(m).id(m.id)
                     }
+                    if AgentBrowser.shared.conversationID == conversationID && AgentBrowser.shared.hasPage { BrowserPanel() }
                     if session.running { live(session).id("live") }
                 }
                 .padding()

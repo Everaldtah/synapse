@@ -401,8 +401,8 @@ struct OnDeviceLinuxSection: View {
                         Label("Install Linux · \(ByteCountFormatter.string(fromByteCount: linux.pin.bytes, countStyle: .file))", systemImage: "arrow.down.circle")
                     }
                 }
-            case .downloading:
-                HStack { ProgressView(); Text("Downloading…").font(.subheadline) }
+            case .downloading(let f):
+                HStack { ProgressView(value: f); Text("Downloading… \(Int(f * 100))%").font(.subheadline).monospacedDigit() }
             case .importing:
                 HStack { ProgressView(); Text("Unpacking…").font(.subheadline) }
             case .booting:

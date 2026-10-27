@@ -223,6 +223,13 @@ final class WorkspaceOpsTests: XCTestCase {
         XCTAssertEqual(decoded.capabilities, [.web])
         XCTAssertEqual(decoded.maxSteps, 24)
         XCTAssertEqual(Set(AgentPresets.all.map(\.id)).count, AgentPresets.all.count)
+        // The browser tool: full lists only (small lists stay as tuned; the app adds the short form for browsing agents).
+        XCTAssertTrue(AgentToolCatalog.appTools(for: AgentPresets.browser.capabilities).contains(.browser))
+        XCTAssertFalse(AgentToolCatalog.appTools(for: AgentPresets.browser.capabilities, small: true).contains(.browser))
+        XCTAssertEqual(AgentToolCatalog.browserSmall.name, "browser")
+        XCTAssertEqual(Agent.parseCalls("<tool name=\"browser\" action=\"type\" target=\"3\" submit=\"true\">weather in Lisbon</tool>", known: ["browser"]),
+                       [AgentToolCall(name: "browser", input: "weather in Lisbon", attributes: ["action": "type", "target": "3", "submit": "true"])])
+        XCTAssertEqual(NativeToolCalls.markup(name: "browser", arguments: #"{"action":"click","input":"7"}"#), "<tool name=\"browser\" action=\"click\">7</tool>")
         let tools = AgentToolCatalog.appTools(for: [.editWorkspace, .graph, .documents])
         XCTAssertTrue(tools.contains(.createDatabase) && tools.contains(.graphGroup) && tools.contains(.createPresentation))
         XCTAssertFalse(AgentToolCatalog.appTools(for: [.web]).contains(.listPages))

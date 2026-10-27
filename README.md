@@ -15,8 +15,14 @@ through Synapse Bridge, an Anthropic API key, or a **free API provider** (NVIDIA
 
 The **Agents** tab is a set of AI agents you chat with. Each works in steps with tools and shows every step:
 
-- **Synapse Agent** (does anything in the app), **Researcher**, **Graph Architect**, **Analyst**, **Presenter** and
-  **Coder** ship built in; make your own with a name, emoji, instructions, a model and the tools it may use.
+- **Synapse Agent** (does anything in the app), **Researcher**, **Graph Architect**, **Analyst**, **Presenter**,
+  **Coder** and **Browser** ship built in; make your own with a name, emoji, instructions, a model and the tools it
+  may use.
+- **Browser (Computer)**: the Browser agent uses the app's own web browser (WebKit — the same engine as Chrome and
+  Safari on iPhone) like a person: opens sites, reads a numbered map of what's on the page, taps, types, scrolls. You
+  watch it live in the chat and full-size under Agents › **Computer**, with every tap ringed and every keystroke
+  shown; you can take over the page yourself at any time. Vision models also get a screenshot after each action;
+  text-only models work from the page map. Everything runs on the iPhone.
 - **Controls the app**: lists, searches and reads pages; creates, edits, renames, moves and trashes them; links
   pages with `[[links]]` and `#tags`; builds databases (typed columns) and adds or updates rows; writes to the daily
   note; opens pages and tabs.
@@ -26,9 +32,10 @@ The **Agents** tab is a set of AI agents you chat with. Each works in steps with
 - **Makes files**: Excel spreadsheets (several sheets, live formulas), PowerPoint decks (six themes, speaker notes),
   Word documents and PDFs, all generated on the iPhone; any page can be exported the same way from its ••• menu.
   Files open in Quick Look, share anywhere, and live in Files › Synapse › Agent Files.
-- **Web and terminal**: web search and page reading from the iPhone; a Linux shell on the iPhone (Alpine, via iSH)
-  or in the bridge computer's sandbox, plus Claude Code there for hard tasks. Files the shell makes come back into
-  the app. The **Terminal** screen gives you the same shells directly.
+- **Web and terminal**: web search and page reading from the iPhone; a Linux shell on the iPhone (Alpine, via iSH;
+  downloaded once, 107 MB, the first time an agent or you run a command) or in the bridge computer's sandbox, plus
+  Claude Code there for hard tasks. Files the shell makes come back into the app. The **Terminal** screen is an
+  interactive bash on the iPhone's Linux (and a command runner for the computer's sandbox).
 - **Attachments of any type**: documents (PDF, Word, PowerPoint, Excel, text, code, archives), photos (OCR, and
   sent as images to vision models), scans, voice recordings and audio/video (transcribed).
 - **Any model, per chat**: on-device (Apple's model or a downloaded MLX model), Claude or ChatGPT subscriptions,

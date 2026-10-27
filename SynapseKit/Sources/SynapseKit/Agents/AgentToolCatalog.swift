@@ -148,6 +148,24 @@ public extension AgentToolSpec {
         summary: "Bring a file the shell made into Synapse so the user can open and share it. Input: its path; where=\"iphone\" or \"pc\" as for shell.",
         example: "<tool name=\"save_file\" where=\"pc\">out/chart.png</tool>")
 
+    // MARK: Browser
+
+    /// The built-in browser. The app runs it (WebKit) and shows the user the screen.
+    static let browser = AgentToolSpec(
+        name: "browser",
+        summary: """
+        Use the built-in web browser like a person would; the user watches the screen. One action per call. After         every call you get the page's title, URL, a numbered map of what can be clicked or typed into, and the         visible text. Actions (attribute action): open (input: a URL, or words to search for), click (input: an         element number from the map, or the text of a link/button), type (target="number", input: the text; add         submit="true" to press Enter afterwards), key (input: Enter, Escape, Tab, Backspace), scroll (input: down, up,         top, bottom, or an element number), read (no input: the whole page's text; input: words to find on the         page), back, wait (input: seconds). Examples: <tool name="browser" action="type" target="3"         submit="true">weather in Lisbon</tool>  <tool name="browser" action="click">7</tool>  <tool name="browser"         action="scroll">down</tool>. Use the browser when the user wants something done or checked on a website;         web_search is only for quick facts.
+        """,
+        example: "<tool name=\"browser\" action=\"open\">https://en.wikipedia.org</tool>")
+
+    /// The same tool for small models: fewer words, the same actions.
+    static let browserSmall = AgentToolSpec(
+        name: "browser",
+        summary: """
+        Web browser the user watches. action="open" (URL or search words), "click" (element number), "type"         (target="number", the text; submit="true" presses Enter), "scroll" (down/up), "read", "back". Each call returns         the page's numbered elements and text. E.g. <tool name="browser" action="type" target="3" submit="true">weather         in Lisbon</tool>
+        """,
+        example: "<tool name=\"browser\" action=\"open\">https://en.wikipedia.org</tool>")
+
     // MARK: Other agents
 
     static func askAgent(_ names: [String]) -> AgentToolSpec {
@@ -176,6 +194,9 @@ public enum AgentToolCatalog {
                 : [.graphOverview, .graphSettings, .setGraph, .graphGroup, .showGraph]
         }
         if capabilities.contains(.navigate) { t.append(.openInApp) }
+        // Small models get the browser only when it's what the agent is for (see AgentToolbox), so the tool lists
+        // small models were tuned on don't change.
+        if capabilities.contains(.browser) && !small { t.append(.browser) }
         if capabilities.contains(.documents) {
             t += small ? [.createSpreadsheet, .createPresentation, .createPDF]
                 : [.createSpreadsheet, .createPresentation, .createDocument, .createPDF, .exportPage]

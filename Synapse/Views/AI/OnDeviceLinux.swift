@@ -26,8 +26,12 @@ final class OnDeviceLinux {
         let bytes: Int64 = 106_800_000
     }
 
-    private(set) var state: State = .notInstalled
+    private(set) var state: State = .notInstalled {
+        didSet { onProgress?(stateLabel) }
+    }
     private(set) var bootMs: Double?
+    /// Progress lines for whoever is waiting (an agent's step).
+    @ObservationIgnored private var onProgress: ((String) -> Void)?
     let pin = RootfsPin()
     @ObservationIgnored let runtime = LinuxRuntime.shared
 
@@ -46,6 +50,81 @@ final class OnDeviceLinux {
     }
 
     var isReady: Bool { state == .ready }
+
+    var stateLabel: String {
+        switch state {
+        case .notInstalled: return isInstalled ? "Linux is installed" : "Linux isn't installed"
+        case .downloading(let f): return "Downloading Linux… \(Int(f * 100))%"
+        case .importing: return "Unpacking Linux…"
+        case .booting: return "Starting Linux…"
+        case .ready: return "Linux is running"
+        case .failed(let why): return "Linux failed: \(why)"
+        }
+    }
+
+    /// Install (first time), boot and wait; throws when that fails. Progress lines go to `progress`.
+    func ensureReady(progress: ((String) -> Void)? = nil) async throws {
+        if state == .ready { return }
+        onProgress = progress
+        defer { onProgress = nil }
+        await start()
+        if case .failed(let why) = state { throw AIError(message: why) }
+        guard state == .ready else { throw AIError(message: "Linux on this iPhone isn't ready.") }
+    }
+
+    /// An interactive bash on the share folder (the Terminal). Linux is installed and started first if needed.
+    func openShell() async throws -> Shell {
+        try await ensureReady()
+        let session = try runtime.startSession(argv: ["/bin/bash", "-l"],
+                                               env: ["HOME": "/root", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                                     "TERM": "dumb", "LANG": "C.UTF-8", "PS1": "\\w $ "],
+                                               cwd: LinuxRuntime.hostMountPoint, cols: 60, rows: 30)
+        return Shell(session: session)
+    }
+
+    /// One interactive shell: its screen text (terminal escapes stripped) and a way to type into it.
+    @MainActor
+    @Observable
+    final class Shell {
+        private(set) var text = ""
+        private(set) var exitCode: Int32?
+        @ObservationIgnored private let session: LinuxSession
+
+        init(session: LinuxSession) {
+            self.session = session
+            session.onOutput = { [weak self] data in
+                let chunk = String(decoding: data, as: UTF8.self)
+                Task { @MainActor in self?.append(chunk) }
+            }
+            session.onExit = { [weak self] code in
+                Task { @MainActor in self?.exitCode = code }
+            }
+        }
+
+        var isRunning: Bool { exitCode == nil }
+
+        private func append(_ chunk: String) {
+            text += Self.plain(chunk)
+            if text.count > 160_000 { text = String(text.suffix(100_000)) }
+        }
+
+        func send(_ line: String) { session.write(Data((line + "\n").utf8)) }
+        func interrupt() { session.write(Data([0x03])) }
+        func close() { session.hangup() }
+
+        /// Drop terminal control sequences (colours, cursor moves, titles) and bells; keep the text.
+        static func plain(_ s: String) -> String {
+            var t = s
+            for pattern in ["\u{1B}\\[[0-9;?]*[ -/]*[@-~]", "\u{1B}\\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)", "\u{1B}[()][A-Za-z0-9]", "\u{1B}[=>78]", "\u{1B}."] {
+                t = t.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+            }
+            t = t.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\u{07}", with: "")
+            while t.contains("\u{08}") {
+                t = t.replacingOccurrences(of: "[^\n]\u{08}", with: "", options: .regularExpression).replacingOccurrences(of: "^\u{08}", with: "", options: .regularExpression)
+            }
+            return t
+        }
+    }
 
     init() {
         if isInstalled { state = .notInstalled }
@@ -80,7 +159,12 @@ final class OnDeviceLinux {
     }
 
     private func download() async throws -> URL {
-        let (tmp, response) = try await URLSession.shared.download(from: pin.url)
+        let (tmp, response) = try await Downloader.download(pin.url) { [weak self] fraction in
+            Task { @MainActor in
+                guard let self, case .downloading(let f) = self.state, fraction - f >= 0.02 || fraction >= 1 else { return }
+                self.state = .downloading(fraction)
+            }
+        }
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw AIError(message: "Linux download failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)).")
         }
@@ -150,6 +234,50 @@ final class OnDeviceLinux {
             if !e.isEmpty { parts.append("[stderr]\n" + e) }
             if code != 0 { parts.append("[exit code \(code)]") }
             return parts.isEmpty ? "(no output)" : parts.joined(separator: "\n")
+        }
+    }
+
+    /// A download that reports progress (URLSession's async download has none).
+    private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let progress: (Double) -> Void
+        private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
+        private var expected: Int64
+
+        private init(progress: @escaping (Double) -> Void, expected: Int64) {
+            self.progress = progress
+            self.expected = expected
+        }
+
+        static func download(_ url: URL, expected: Int64 = 106_800_000, progress: @escaping (Double) -> Void) async throws -> (URL, URLResponse) {
+            let d = Downloader(progress: progress, expected: expected)
+            let session = URLSession(configuration: .default, delegate: d, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            return try await withCheckedThrowingContinuation { c in
+                d.continuation = c
+                session.downloadTask(with: url).resume()
+            }
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+            let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expected
+            progress(min(0.99, Double(totalBytesWritten) / Double(max(1, total))))
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+            // The file is deleted when this returns: keep it.
+            let kept = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".tar.gz")
+            do {
+                try FileManager.default.moveItem(at: location, to: kept)
+                if let response = downloadTask.response { continuation?.resume(returning: (kept, response)); continuation = nil }
+            } catch {
+                continuation?.resume(throwing: error)
+                continuation = nil
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            if let error { continuation?.resume(throwing: error); continuation = nil }
+            else if let c = continuation { c.resume(throwing: AIError(message: "The Linux download ended early.")); continuation = nil }
         }
     }
 

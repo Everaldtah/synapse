@@ -14,6 +14,8 @@ public enum AgentCapability: String, Codable, CaseIterable, Identifiable, Sendab
     case documents
     /// Search and read the web.
     case web
+    /// Drive the built-in browser (open sites, click, type) while the user watches.
+    case browser
     /// Run commands in a Linux shell (on the iPhone or the bridge computer's sandbox).
     case shell
     /// Hand hard tasks to Claude Code on the bridge computer.
@@ -31,6 +33,7 @@ public enum AgentCapability: String, Codable, CaseIterable, Identifiable, Sendab
         case .navigate: return "Open pages and tabs"
         case .documents: return "Make files (Excel, PowerPoint, Word, PDF)"
         case .web: return "Search and read the web"
+        case .browser: return "Use the browser (Computer)"
         case .shell: return "Linux terminal"
         case .claudeCode: return "Claude Code (bridge)"
         case .delegate: return "Ask other agents"
@@ -45,6 +48,7 @@ public enum AgentCapability: String, Codable, CaseIterable, Identifiable, Sendab
         case .navigate: return "arrow.up.forward.app"
         case .documents: return "doc.richtext"
         case .web: return "globe"
+        case .browser: return "macwindow"
         case .shell: return "terminal"
         case .claudeCode: return "sparkles.rectangle.stack"
         case .delegate: return "person.2"
@@ -192,7 +196,15 @@ public enum AgentPresets {
         """,
         capabilities: [.shell, .claudeCode, .web, .readWorkspace, .editWorkspace, .documents], maxSteps: 30, builtIn: true)
 
-    public static let all: [AgentProfile] = [synapse, researcher, graphArchitect, analyst, presenter, coder]
+    public static let browser = AgentProfile(
+        id: UUID(uuidString: "5E0A6E47-0000-4000-8000-000000000007")!, name: "Browser", icon: "🌐",
+        summary: "Uses the built-in browser like a person: opens sites, clicks, types and reads while you watch",
+        instructions: """
+        You browse the web for the user in Synapse's built-in browser; they watch the screen as you work. Work one         action at a time: open a site, read the page map that comes back, then click or type using the element         numbers. Prefer a site's own search box over guessing URLs. Scroll when what you need isn't visible yet. If a         page asks for cookies or a sign-in, dismiss the banner or tell the user what's needed. Never buy, pay, send         messages, post, or change account settings unless the user asked for exactly that. When done, answer with         what you found (quote the page) and save notes to a page if the user wants them kept.
+        """,
+        capabilities: [.browser, .web, .readWorkspace, .editWorkspace, .documents], maxSteps: 40, builtIn: true)
+
+    public static let all: [AgentProfile] = [synapse, researcher, graphArchitect, analyst, presenter, coder, browser]
 }
 
 /// A file attached to a message (by the user) or made by an agent.

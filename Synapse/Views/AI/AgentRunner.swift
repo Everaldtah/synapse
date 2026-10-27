@@ -31,7 +31,8 @@ final class AgentRunner {
 
     var webAvailable: Bool { ai.agentWeb }
     var pcShell: Bool { ai.agentShell && ai.bridgeSandbox?.available == true && ai.bridgeEndpoint != nil }
-    var phoneShell: Bool { ai.agentShell && ai.linux.isInstalled }
+    /// Always there: Linux installs itself on the first command.
+    var phoneShell: Bool { ai.agentShell }
     var shellAvailable: Bool { pcShell || phoneShell }
     var harnessAvailable: Bool { ai.agentHarness && ai.bridgeHarness?.loggedIn == true && ai.bridgeEndpoint != nil }
 
@@ -89,6 +90,10 @@ final class AgentRunner {
             // where="iphone" (or no computer sandbox) runs on the phone; otherwise on the computer.
             let onPhone = phoneShell && (call.attributes["where"] == "iphone" || !pcShell)
             if onPhone {
+                if !ai.linux.isReady {
+                    progress(ai.linux.isInstalled ? "Starting Linux on this iPhone" : "Installing Linux on this iPhone (107 MB, once)")
+                    try await ai.linux.ensureReady { progress($0) }
+                }
                 if !sharedWithPhone { ai.linux.share(files); sharedWithPhone = true }
                 progress("Linux on this iPhone")
                 return try await ai.linux.run(call.input, timeout: 180)
@@ -200,6 +205,7 @@ struct AgentStepsView: View {
         case "create_document", "create_pdf", "export_page": return "doc.richtext"
         case "save_file": return "square.and.arrow.down"
         case "ask_agent": return "person.2"
+        case "browser": return "macwindow"
         default: return "wrench.and.screwdriver"
         }
     }
@@ -242,6 +248,18 @@ struct AgentStepsView: View {
         case "export_page": return "Exported \(call.input) as \(a["format"] ?? "pdf")"
         case "save_file": return "Saved \(call.input) to Synapse"
         case "ask_agent": return "Asked \(a["agent"] ?? "an agent"): \(first)"
+        case "browser":
+            switch (a["action"] ?? "open").lowercased() {
+            case "open", "goto", "navigate", "search": return "Browser: opened \(call.input)"
+            case "click", "tap", "press": return "Browser: tapped \(Int(call.input) != nil ? "[\(call.input)]" : "“\(call.input)”")"
+            case "type", "fill", "enter": return "Browser: typed “\(first)”" + (a["target"].map { " into [\($0)]" } ?? "") + (a["submit"] == "true" ? " ⏎" : "")
+            case "key", "keypress": return "Browser: pressed \(AgentBrowser.keyName(call.input))"
+            case "scroll": return "Browser: scrolled \(call.input.isEmpty ? "down" : call.input)"
+            case "back": return "Browser: went back"
+            case "wait", "sleep": return "Browser: waited"
+            case "read", "text", "find", "look", "map", "screenshot": return call.input.isEmpty ? "Browser: read the page" : "Browser: looked for “\(call.input)”"
+            default: return "Browser: \(a["action"] ?? "")"
+            }
         default: return "\(call.name): \(call.input)"
         }
     }

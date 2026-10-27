@@ -21,6 +21,8 @@ enum Route: Hashable {
     case agentEditor(UUID?)
     case agentFiles
     case terminal
+    /// The browser agents drive, full size.
+    case computer
     case apiProviders
 }
 

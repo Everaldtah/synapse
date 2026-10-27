@@ -49,6 +49,11 @@ final class AgentToolbox {
                 t.append(spec)
             }
         }
+        if caps.contains(.browser), small, agent.id == AgentPresets.browser.id || !agent.builtIn {
+            // Small models: only agents made for browsing get the (short) browser tool, so the tool lists small
+            // models were tuned on stay the same for the other built-in agents.
+            t.append(.browserSmall)
+        }
         if caps.contains(.delegate), depth == 0, !small {
             let others = center.profiles.filter { $0.id != agent.id }.map(\.name)
             if !others.isEmpty { t.append(.askAgent(others)) }
@@ -68,6 +73,12 @@ final class AgentToolbox {
         let a = call.attributes
         let input = call.input
         switch call.name {
+        // The browser (Computer)
+        case "browser":
+            let browser = AgentBrowser.shared
+            if case .api(let p, let m) = choice { browser.wantsScreenshots = APIProviderStore.shared.supportsVision(provider: p, model: m) }
+            else { browser.wantsScreenshots = false }
+            return try await browser.perform(call, agent: agent.name, conversation: session.id, limit: limit)
         // Reading
         case "list_pages":
             return WorkspaceOps.listPages(store.workspace, filter: input)

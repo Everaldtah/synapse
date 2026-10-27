@@ -15,6 +15,7 @@ struct PendingApproval: Identifiable {
 @MainActor
 @Observable
 final class AgentSession {
+    let id: UUID
     var running = false
     var status = ""
     var steps: [AgentStep] = []
@@ -28,6 +29,8 @@ final class AgentSession {
     /// Pages and databases this run created (for "open" chips).
     var touched: Set<UUID> = []
     @ObservationIgnored var task: Task<Void, Never>?
+
+    init(id: UUID) { self.id = id }
 
     /// Wait for the user to allow or decline a change.
     func ask(_ call: AgentToolCall, agent: AgentProfile) async -> Bool {
@@ -172,7 +175,7 @@ final class AgentCenter {
 
     func session(_ id: UUID) -> AgentSession {
         if let s = sessions[id] { return s }
-        let s = AgentSession()
+        let s = AgentSession(id: id)
         sessions[id] = s
         return s
     }
@@ -339,9 +342,11 @@ final class AgentCenter {
             var out = ""
             let stream: AsyncThrowingStream<String, Error>
             if case .api(let p, let m) = choice {
-                // Images go with the first request of the run (each request is sent whole).
-                stream = APIProviderStore.shared.stream(req, provider: p, model: m, images: req.messages.count == firstCount ? images : [],
-                                                        tools: tools)
+                // Images go with the first request of the run (each request is sent whole); a browser screenshot
+                // goes with the request after the action that took it, when the model can see.
+                var sent = req.messages.count == firstCount ? images : []
+                if APIProviderStore.shared.supportsVision(provider: p, model: m), let shot = AgentBrowser.shared.takeScreenshot() { sent.append(shot) }
+                stream = APIProviderStore.shared.stream(req, provider: p, model: m, images: sent, tools: tools)
             } else {
                 stream = ai.stream(req, choice: choice, fallback: false)
             }

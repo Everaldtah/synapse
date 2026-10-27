@@ -74,6 +74,7 @@ extension View {
             case .agentEditor(let id): AgentEditorView(agentID: id)
             case .agentFiles: AgentFilesView()
             case .terminal: TerminalView()
+            case .computer: ComputerView()
             case .apiProviders: APIProvidersView()
             }
         }
