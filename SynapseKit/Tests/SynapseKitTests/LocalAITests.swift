@@ -154,6 +154,15 @@ final class MeetingNotesTests: XCTestCase {
         XCTAssertEqual(steps.last?.label, "Done")
     }
 
+    func testCleanupRequest() {
+        let one = MeetingNotes.cleanupRequest("so um we we ship on friday", title: "Stand-up \"Mon\"")
+        let text = one.messages[0].content
+        XCTAssertTrue(text.hasPrefix("Clean up this speech-recognition transcript of \"Stand-up 'Mon'\". Fix words"))
+        XCTAssertTrue(text.hasSuffix("<transcript>\nso um we we ship on friday\n</transcript>"))
+        XCTAssertEqual(one.system, MeetingNotes.system)
+        XCTAssertTrue(MeetingNotes.cleanupRequest("x", part: 2, of: 3, title: "T").messages[0].content.contains("of \"T\" (part 2 of 3). Fix"))
+    }
+
     func testMeetingBlocks() {
         let blocks = MeetingNotes.blocks(notes: "## Summary\nShort.\n\n## Action items\n- [ ] Send deck", transcript: "Hello all.\nSee #42 and [[x]].",
                                          audio: "asset:a.m4a")

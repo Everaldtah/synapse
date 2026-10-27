@@ -212,6 +212,23 @@ public enum MeetingNotes {
         return AIRequest(system: system, messages: [AIMessage(role: .user, content: user)])
     }
 
+    /// A clean transcript from raw speech recognition: mis-hearings fixed from context, punctuation, paragraphs, fillers
+    /// dropped, nothing summarised. Long transcripts go in parts (the reply is about as long as the part).
+    public static func cleanupRequest(_ chunk: String, part: Int = 1, of count: Int = 1, title: String) -> AIRequest {
+        let which = count > 1 ? " (part \(part) of \(count))" : ""
+        let user = """
+        Clean up this speech-recognition transcript of "\(AIPrompts.escape(title))"\(which). Fix words that were clearly \
+        misheard, using the context; fix punctuation and capitalisation; drop filler words (um, uh), false starts and \
+        accidental repeats; start a new paragraph when the speaker or the topic changes. Keep everything that was said, \
+        in the original wording and language: don't summarise, add or reorder anything. Reply with only the transcript.
+
+        <transcript>
+        \(chunk)
+        </transcript>
+        """
+        return AIRequest(system: system, messages: [AIMessage(role: .user, content: user)])
+    }
+
     /// Split text into chunks of at most `maxCharacters`, breaking between paragraphs, then sentences, then words.
     public static func chunks(_ text: String, maxCharacters: Int) -> [String] {
         let limit = max(200, maxCharacters)
