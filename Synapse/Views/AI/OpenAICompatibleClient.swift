@@ -26,6 +26,7 @@ struct OpenAICompatibleClient {
                     guard let url = URL(string: Self.trimmed(baseURL) + "/chat/completions") else {
                         throw AIError(message: "\(providerName)'s address isn't a valid URL: \(baseURL)")
                     }
+                    try await AIConsent.ensure(key: url.host ?? providerName, service: providerName)
                     var req = Self.request(url, apiKey: apiKey, extraHeaders: extraHeaders, timeout: 600)
                     req.httpMethod = "POST"
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -112,6 +113,7 @@ struct OpenAICompatibleClient {
     static func transcribe(file: URL, baseURL: String, apiKey: String?, model: String, providerName: String? = nil) async throws -> String {
         guard let url = URL(string: trimmed(baseURL) + "/audio/transcriptions") else { throw AIError(message: "That address isn't a valid URL: \(baseURL)") }
         let name = providerName ?? url.host ?? "The server"
+        try await AIConsent.ensure(key: url.host ?? name, service: name, detail: "This recording is sent to be transcribed.")
         let boundary = "synapse-\(UUID().uuidString)"
         var req = request(url, apiKey: apiKey, extraHeaders: [:], timeout: 900)
         req.httpMethod = "POST"

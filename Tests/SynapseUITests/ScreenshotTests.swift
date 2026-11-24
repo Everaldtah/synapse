@@ -71,12 +71,17 @@ final class ScreenshotTests: XCTestCase {
         pause(2.5)
     }
 
+    /// iPhone: the bottom tab bar. iPad: the top tab bar, whose buttons are identified by their SF Symbol, so match the label.
     private func tab(_ name: String) {
-        let candidates = [app.tabBars.buttons[name], app.buttons[name], app.descendants(matching: .any)[name]]
-        for c in candidates where c.waitForExistence(timeout: 4) {
-            if c.isHittable {
-                c.tap()
-                return
+        let label = NSPredicate(format: "label == %@", name)
+        for query in [app.tabBars.buttons.matching(label), app.buttons.matching(label)] {
+            _ = query.firstMatch.waitForExistence(timeout: 6)
+            for i in 0..<query.count {
+                let button = query.element(boundBy: i)
+                if button.isHittable {
+                    button.tap()
+                    return
+                }
             }
         }
         XCTFail("no tab \(name)\n\(app.debugDescription.prefix(6000))")

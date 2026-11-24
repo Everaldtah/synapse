@@ -90,6 +90,13 @@ final class AgentRunner {
             // where="iphone" (or no computer sandbox) runs on the phone; otherwise on the computer.
             let onPhone = phoneShell && (call.attributes["where"] == "iphone" || !pcShell)
             if onPhone {
+                if !ai.linux.isInstalled {
+                    let ok = await AIConsent.confirm(
+                        title: "Install Linux?",
+                        message: "The agent wants to run a command. Synapse downloads Alpine Linux (107 MB, once) from GitHub and runs it inside the app.",
+                        allow: "Install")
+                    if !ok { throw AIError(message: "Linux isn't installed, so the command didn't run.") }
+                }
                 if !ai.linux.isReady {
                     progress(ai.linux.isInstalled ? "Starting Linux on this iPhone" : "Installing Linux on this iPhone (107 MB, once)")
                     try await ai.linux.ensureReady { progress($0) }

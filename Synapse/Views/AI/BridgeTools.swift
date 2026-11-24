@@ -173,6 +173,9 @@ struct BridgeTools {
     /// Returns the final answer; `onEvent` sees each step.
     func harness(prompt: String, system: String?, model: String, maxTurns: Int = 12,
                  onEvent: @escaping @MainActor (HarnessEvent) -> Void) async throws -> String {
+        try await AIConsent.ensure(
+            key: "bridge.claude", service: "Claude Code on your computer",
+            detail: "Synapse Bridge on your computer passes it to Claude Code, which sends it to Anthropic under your own Claude account.")
         var req = request("v1/harness", timeout: 1_900)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")

@@ -61,6 +61,9 @@ jobs:
             -skipPackagePluginValidation -skipMacroValidation COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered '(error:|\*\* )' || true
           grep -q '\*\* TEST BUILD SUCCEEDED \*\*' "$RUNNER_TEMP/build.log"
+          APP=$(find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name Synapse.app | head -1)
+          plutil -lint "$APP/PrivacyInfo.xcprivacy"
+          plutil -p "$APP/Info.plist" | grep -E 'CFBundleShortVersionString|CFBundleVersion'
       - name: Screenshots on each simulator
         run: |
           set -o pipefail

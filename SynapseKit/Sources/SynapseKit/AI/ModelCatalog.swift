@@ -105,7 +105,7 @@ public enum ModelCatalog {
             "Weak at maths, code and multi-step reasoning",
             "Fewer languages than the cloud models",
         ],
-        requirements: "iPhone 15 Pro or newer (your target: iPhone 16 Pro Max and up) with Apple Intelligence turned on"
+        requirements: "iPhone 15 Pro or newer, or an iPad with M1 or newer, with Apple Intelligence turned on"
     )
 
     /// Apple's on-device speech-to-text model (SpeechAnalyzer / SpeechTranscriber, iOS 26).

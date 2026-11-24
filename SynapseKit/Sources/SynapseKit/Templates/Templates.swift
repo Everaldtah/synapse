@@ -230,7 +230,7 @@ public enum Templates {
             p("Databases", .heading2),
             p("A database is a collection of pages with properties, shown as a table, board, list, gallery, calendar or chart. Try [[Tasks]].", .bulleted),
             p("AI", .heading2),
-            p("Tap ✨ on the keyboard bar or **Ask Synapse** on Home. Connect your Claude account in **Settings › Claude** — Synapse runs on your own Claude subscription through Claude Code, or on an API key.", .bulleted),
+            p("Tap ✨ on the keyboard bar, or chat with an agent in the **Agents** tab. Pick who answers in **Settings › AI models**: Apple Intelligence on this device, an open model you download, or a cloud model you connect. Synapse asks before it shares anything with a cloud service.", .bulleted),
             p("Try it", .heading2),
             p("Open [[Linked thinking]]", .todo),
             p("Add a task to [[Tasks]]", .todo),

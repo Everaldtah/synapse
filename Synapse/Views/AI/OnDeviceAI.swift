@@ -57,7 +57,7 @@ final class AppleFoundationLLM: LocalLLM {
         case .available:
             return nil
         case .unavailable(.deviceNotEligible):
-            return "This iPhone can't run Apple Intelligence (it needs an iPhone 15 Pro or newer)."
+            return "This device can't run Apple Intelligence. Download an open model in Settings › AI models, or connect a cloud model."
         case .unavailable(.appleIntelligenceNotEnabled):
             return "Turn on Apple Intelligence in Settings › Apple Intelligence & Siri to use the on-device model."
         case .unavailable(.modelNotReady):

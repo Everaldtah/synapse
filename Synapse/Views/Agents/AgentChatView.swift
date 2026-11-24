@@ -138,8 +138,8 @@ struct AgentChatView: View {
             Text(agent.name).font(.title2.bold())
             Text(agent.summary).foregroundStyle(.secondary)
             FlowChips(items: AgentCapability.allCases.filter { agent.capabilities.contains($0) }.map { ($0.title, $0.symbol) })
-            if !ai.canAnswer && APIProviderStore.shared.readyProviders.isEmpty {
-                Button { app.agentsPath.append(.apiProviders) } label: { Label("Add a free AI model first", systemImage: "key") }
+            if !ai.canAnswer {
+                Button { app.agentsPath.append(.apiProviders) } label: { Label("Set up an AI model first", systemImage: "key") }
                     .buttonStyle(.borderedProminent)
             }
             ForEach(Self.examples(for: agent), id: \.self) { q in

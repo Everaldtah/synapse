@@ -45,7 +45,7 @@ struct SettingsView: View {
                 }
                 Button { app.tab = .agents } label: { Label("Agents", systemImage: "sparkles") }
             } footer: {
-                Text("Everyday AI runs on this iPhone (Apple Intelligence). Complex tasks go to your Claude or ChatGPT subscription through Synapse Bridge on your computer, an Anthropic API key, or a free API provider such as NVIDIA NIM, Groq or Gemini.")
+                Text("Everyday AI runs on this iPhone (Apple Intelligence). Complex tasks go to your Claude or ChatGPT subscription through Synapse Bridge on your computer, an Anthropic API key, or a free API provider such as NVIDIA NIM, Groq or Gemini. Synapse asks before it sends anything to a cloud service.")
             }
 
             Section("Appearance") {
@@ -81,13 +81,26 @@ struct SettingsView: View {
             Section {
                 Button("Reset to the sample workspace", role: .destructive) { confirmReset = true }
             } footer: {
-                Text("Your workspace is stored on this device in Files › On My iPhone › Synapse. Sync across devices is planned.")
+                Text("Your workspace is stored on this device, in the Files app under Synapse.")
+            }
+
+            Section {
+                Link(destination: URL(string: "https://zenith-umbra.vercel.app/synapse/privacy.html")!) { Label("Privacy Policy", systemImage: "hand.raised") }
+                Button("Ask again before sharing with AI services") {
+                    AIConsent.reset()
+                    app.show(toast: "Synapse will ask again")
+                }
+            } header: {
+                Text("Privacy")
+            } footer: {
+                Text("Synapse has no account, analytics or ads. Before anything is sent to a cloud AI service, Synapse asks you once for that service.")
             }
 
             Section("About") {
                 LabeledContent("Version", value: "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))")
-                Link(destination: URL(string: "https://github.com/Everaldtah/synapse")!) { Label("Source & Synapse Bridge", systemImage: "chevron.left.forwardslash.chevron.right") }
-                Text("Synapse is free software under the GPL-3.0 (it includes iSH for Linux on the iPhone; source on GitHub). Not made by or affiliated with Anthropic or Notion. Claude and Claude Code are products of Anthropic.")
+                Link(destination: URL(string: "https://zenith-umbra.vercel.app/synapse/support.html")!) { Label("Help & Synapse Bridge", systemImage: "questionmark.circle") }
+                Link(destination: URL(string: "https://github.com/Everaldtah/synapse")!) { Label("Source code", systemImage: "chevron.left.forwardslash.chevron.right") }
+                Text("Synapse is free software under the GPL-3.0 (it includes iSH for Linux on the iPhone); the source is on GitHub. Not made by or affiliated with Anthropic or OpenAI. Claude and Claude Code are products of Anthropic; ChatGPT and Codex are products of OpenAI.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -141,7 +154,7 @@ struct ConnectClaudeView: View {
                     } else {
                         stepRow(1, "On your computer, install Claude Code and sign in:", code: "claude auth login")
                     }
-                    stepRow(2, "Start the bridge (from the Synapse repo):", code: "node bridge/synapse-bridge.mjs")
+                    stepRow(2, "Get Synapse Bridge (Settings › Help & Synapse Bridge), then start it:", code: "node bridge/synapse-bridge.mjs")
                     stepRow(3, "Scan the QR code it shows, or open its pairing link on this iPhone.", code: nil)
                     Button { showScanner = true } label: { Label("Scan pairing QR code", systemImage: "qrcode.viewfinder") }
                 }

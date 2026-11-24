@@ -747,6 +747,12 @@ struct BridgeClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    try await AIConsent.ensure(
+                        key: "bridge.\(engine)",
+                        service: engine == "codex" ? "Codex on your computer" : "Claude Code on your computer",
+                        detail: engine == "codex"
+                            ? "Synapse Bridge on your computer passes it to Codex, which sends it to OpenAI under your own ChatGPT account."
+                            : "Synapse Bridge on your computer passes it to Claude Code, which sends it to Anthropic under your own Claude account.")
                     var req = URLRequest(url: baseURL.appendingPathComponent("v1/chat"))
                     req.httpMethod = "POST"
                     req.timeoutInterval = 600
@@ -819,6 +825,8 @@ struct AnthropicClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    try await AIConsent.ensure(key: "api.anthropic.com", service: "Anthropic (Claude API)",
+                                               detail: "It goes to api.anthropic.com with your own API key.")
                     var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
                     req.httpMethod = "POST"
                     req.timeoutInterval = 600
@@ -885,7 +893,7 @@ struct AnthropicClient {
             message = err["message"] as? String ?? ""
         }
         switch code {
-        case 401: return "The API key was rejected. Check it in Settings › Claude."
+        case 401: return "The API key was rejected. Check it in Settings › Cloud connection."
         case 403: return "This API key can't use that model. \(message)"
         case 404: return "Model not found: \(message)"
         case 429: return "Rate limited by the Claude API. Try again in a moment."
