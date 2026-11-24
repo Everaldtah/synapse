@@ -1,0 +1,135 @@
+# App Store screenshots from the real app in the iOS simulator: Tests/SynapseUITests/ScreenshotTests
+# walks a fresh install's sample workspace (Home, a page, the Tasks database, the Graph, Agents,
+# Settings) on a 6.9-inch iPhone (1320x2868), a 6.3-inch iPhone (1206x2622) and a 13-inch iPad
+# (2064x2752). The PNGs (RGB, no alpha) are uploaded as the "appstore-screenshots" artifact.
+name: Screenshots
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [store-screenshots]
+
+concurrency:
+  group: screenshots
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    name: App Store screenshots (simulator)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode 26
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$X" ]; then echo "no Xcode 26 on this image"; ls /Applications | grep -i xcode; exit 1; fi
+          sudo xcode-select -s "$X/Contents/Developer"
+          xcodebuild -version
+      - name: Generate the Xcode project
+        run: |
+          which xcodegen || brew install xcodegen
+          scripts/fetch-ish.sh
+          xcodegen generate
+      - name: Metal toolchain (MLX compiles its shaders)
+        run: xcodebuild -downloadComponent MetalToolchain || echo "Metal toolchain already installed or unavailable"
+      - name: Simulators (newest iOS runtime)
+        run: |
+          python3 - >> "$GITHUB_ENV" <<'PY'
+          import json, re, subprocess, sys
+          def sh(*args):
+              return subprocess.check_output(args, text=True)
+          runtimes = [r for r in json.loads(sh("xcrun", "simctl", "list", "-j", "runtimes", "available"))["runtimes"]
+                      if r.get("platform") == "iOS" or ".SimRuntime.iOS-" in r["identifier"]]
+          runtimes.sort(key=lambda r: [int(x) for x in r["version"].split(".")])
+          rt = runtimes[-1]
+          types = rt.get("supportedDeviceTypes") or json.loads(sh("xcrun", "simctl", "list", "-j", "devicetypes"))["devicetypes"]
+          for var, pattern in (("IPHONE69", r"iPhone (\d+) Pro Max"), ("IPHONE63", r"iPhone (\d+) Pro"), ("IPAD13", r"iPad Pro 13-inch \(M(\d+)\)")):
+              found = [(int(m.group(1)), t) for t in types if (m := re.fullmatch(pattern, t["name"]))]
+              if not found:
+                  sys.exit(f"no device type matches {pattern} on {rt['name']}: {[t['name'] for t in types]}")
+              t = max(found, key=lambda f: f[0])[1]
+              udid = sh("xcrun", "simctl", "create", f"Screenshots {t['name']}", t["identifier"], rt["identifier"]).strip()
+              print(f"{var}={udid}")
+              print(f"created {t['name']} on {rt['name']}: {udid}", file=sys.stderr)
+          PY
+      - name: Build for testing
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Synapse.xcodeproj -scheme Synapse -configuration Debug \
+            -destination "platform=iOS Simulator,id=$IPHONE69" -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation -skipMacroValidation COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered '(error:|\*\* )' || true
+          grep -q '\*\* TEST BUILD SUCCEEDED \*\*' "$RUNNER_TEMP/build.log"
+      - name: Screenshots on each simulator
+        run: |
+          set -o pipefail
+          ok=0
+          for pair in "iphone69:$IPHONE69" "iphone63:$IPHONE63" "ipad13:$IPAD13"; do
+            dev="${pair%%:*}"; id="${pair#*:}"
+            OUT="$RUNNER_TEMP/shots/$dev"; mkdir -p "$OUT"
+            xcrun simctl boot "$id"; xcrun simctl bootstatus "$id" -b
+            xcrun simctl status_bar "$id" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3
+            TEST_RUNNER_SCREENSHOT_DIR="$OUT" xcodebuild test-without-building -project Synapse.xcodeproj -scheme Synapse \
+              -destination "platform=iOS Simulator,id=$id" -derivedDataPath "$RUNNER_TEMP/dd" \
+              -only-testing:SynapseUITests/ScreenshotTests -resultBundlePath "$RUNNER_TEMP/$dev.xcresult" \
+              2>&1 | tee "$RUNNER_TEMP/$dev.log" | grep -E --line-buffered '^(Test (Case|Suite)|SHOT\||.*error:|\*\* TEST)' || true
+            xcrun simctl shutdown "$id" || true
+            grep -qE '\*\* TEST (EXECUTE )?SUCCEEDED \*\*' "$RUNNER_TEMP/$dev.log" || ok=1
+          done
+          exit $ok
+      - name: Check sizes, drop alpha (App Store rejects it)
+        if: success() || failure()
+        run: |
+          python3 -m pip install -q --break-system-packages pillow
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, pathlib, shutil, subprocess, sys
+          from PIL import Image
+          temp = pathlib.Path(sys.argv[1])
+          want = {"iphone69": (1320, 2868), "iphone63": (1206, 2622), "ipad13": (2064, 2752)}
+          bad = []
+          summary = ["### App Store screenshots", "", "| file | size | mode |", "|---|---|---|"]
+          for device, size in want.items():
+              out = temp / "shots" / device
+              out.mkdir(parents=True, exist_ok=True)
+              bundle = temp / f"{device}.xcresult"
+              if not any(out.glob("*.png")) and bundle.exists():
+                  dump = temp / f"{device}-attachments"
+                  subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(bundle), "--output-path", str(dump)], check=False)
+                  manifest = dump / "manifest.json"
+                  for test in json.loads(manifest.read_text()) if manifest.exists() else []:
+                      for a in test.get("attachments", []):
+                          name = a.get("suggestedHumanReadableName", "")
+                          stem = name.split("_")[0]
+                          if stem[:2].isdigit() and name.endswith(".png"):
+                              shutil.copy(dump / a["exportedFileName"], out / f"{stem}.png")
+              files = sorted(out.glob("*.png"))
+              if not files:
+                  bad.append(f"{device}: no screenshots")
+              for f in files:
+                  im = Image.open(f)
+                  if im.mode != "RGB":
+                      im.convert("RGB").save(f, optimize=True)
+                      im = Image.open(f)
+                  ok = im.size == size
+                  if not ok:
+                      bad.append(f"{device}/{f.name}: {im.size[0]}x{im.size[1]}, want {size[0]}x{size[1]}")
+                  summary.append(f"| {device}/{f.name} | {im.size[0]}x{im.size[1]}{'' if ok else ' (WRONG)'} | {im.mode} |")
+          print("\n".join(summary))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as s:
+              s.write("\n".join(summary) + "\n")
+          if bad:
+              sys.exit("\n".join(bad))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: appstore-screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: screenshot-logs
+          path: ${{ runner.temp }}/*.log
+          if-no-files-found: ignore

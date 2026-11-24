@@ -42,8 +42,14 @@ schemes:
     build:
       targets:
         Synapse: all
+        SynapseUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - SynapseUITests
     archive:
       config: Release
 
@@ -113,3 +119,17 @@ targets:
           - audio
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+
+  # App Store screenshots only (.github/workflows/screenshots.yml); not part of the shipped app.
+  SynapseUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/SynapseUITests
+    dependencies:
+      - target: Synapse
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everaldtah.synapse.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
