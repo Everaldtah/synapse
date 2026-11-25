@@ -10,9 +10,9 @@ on:
         type: boolean
         default: true
       runner:
-        description: "GitHub macOS image (Xcode 27 needs macos-26)"
+        description: "GitHub macOS image (Xcode 27 is on the xcode-27 image)"
         type: string
-        default: macos-26
+        default: xcode-27
       xcode:
         description: "Xcode major version (27 = iOS 27 SDK, required for uploads from April 2027, ITMS-90725)"
         type: string
@@ -24,7 +24,7 @@ concurrency: testflight
 
 jobs:
   testflight:
-    runs-on: ${{ inputs.runner || 'macos-26' }}
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
     timeout-minutes: 60
     env:
       TEAM_ID: BXQW8UBNM2
@@ -35,11 +35,13 @@ jobs:
 
       - name: Xcode ${{ inputs.xcode || '27' }} (newest SDK App Store Connect accepts)
         run: |
-          X=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app 2>/dev/null | sort -V | tail -1)
+          X=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app 2>/dev/null | grep -v -i beta | sort -V | tail -1)
           if [ -z "$X" ]; then echo "no Xcode $XCODE_MAJOR on this image"; ls /Applications | grep -i xcode; sw_vers; exit 1; fi
           sudo xcode-select -s "$X/Contents/Developer"
           xcodebuild -version
           xcodebuild -showsdks | grep -i iphoneos
+          # App Store Connect rejects binaries from beta Xcode builds (their build number ends in a letter, e.g. 27A5218g)
+          if xcodebuild -version | tail -1 | grep -qE "[0-9][a-z]$"; then echo "only a beta Xcode $XCODE_MAJOR here; App Store uploads need a release build"; exit 1; fi
 
       - name: Generate the Xcode project
         run: |
