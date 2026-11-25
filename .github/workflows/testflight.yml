@@ -9,6 +9,14 @@ on:
         description: "Upload to App Store Connect / TestFlight (false: archive only)"
         type: boolean
         default: true
+      runner:
+        description: "GitHub macOS image (Xcode 27 needs macos-26)"
+        type: string
+        default: macos-26
+      xcode:
+        description: "Xcode major version (27 = iOS 27 SDK, required for uploads from April 2027, ITMS-90725)"
+        type: string
+        default: "27"
   push:
     tags: ["v*"]
 
@@ -16,20 +24,22 @@ concurrency: testflight
 
 jobs:
   testflight:
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 60
     env:
       TEAM_ID: BXQW8UBNM2
       KEY_PATH: ${{ github.workspace }}/../asc/AuthKey.p8
+      XCODE_MAJOR: ${{ inputs.xcode || '27' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Xcode 26 (App Store Connect requires the iOS 26 SDK)
+      - name: Xcode ${{ inputs.xcode || '27' }} (newest SDK App Store Connect accepts)
         run: |
-          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$X" ]; then echo "no Xcode 26 on this image"; ls /Applications | grep -i xcode; exit 1; fi
+          X=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$X" ]; then echo "no Xcode $XCODE_MAJOR on this image"; ls /Applications | grep -i xcode; sw_vers; exit 1; fi
           sudo xcode-select -s "$X/Contents/Developer"
           xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos
 
       - name: Generate the Xcode project
         run: |
